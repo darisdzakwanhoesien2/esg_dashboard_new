@@ -1,0 +1,10 @@
+streamlit==1.32.2
+pandas
+plotly
+matplotlib
+seaborn
+wordcloud
+huggingface_hub>=0.10.0
+plotly
+scikit-learn
+python-dotenv
