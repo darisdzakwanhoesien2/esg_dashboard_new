@@ -1,11 +1,14 @@
+# Local development (only install this on your dev machine with appropriate Python)
 streamlit
 pandas
 plotly
 matplotlib
 seaborn
 wordcloud
-huggingface_hub
+huggingface_hub>=0.14.1
 transformers>=4.44.2
-torch>=2.0.0
+tokenizers>=0.15.2
+torch>=2.0
+sentencepiece
 scikit-learn
 python-dotenv
