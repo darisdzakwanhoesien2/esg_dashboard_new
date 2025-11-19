@@ -1,34 +1,105 @@
 import streamlit as st
 import pandas as pd
-
-# Utils
 import sys
 import os
 
 # Add project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from utils.data_loader import load_csv_uploaded_or_local
 from utils.compare_logic import find_missing
+from utils.load_hf_file import load_csv_from_hf
 
 # Page config
 st.set_page_config(page_title="Dataset Comparison", layout="wide")
 
 st.title("📊 ESG Multi-Dataset Comparison Dashboard")
-st.write("Upload or auto-load datasets to analyze differences between `Output` and `Output in CSV`.")
+st.write("Choose data source: Upload, Local, or HuggingFace repository.")
 
-# Sidebar upload section
-st.sidebar.header("📥 Upload Datasets (optional)")
-uploaded_dataset = st.sidebar.file_uploader("Dataset CSV", type=["csv"])
-uploaded_output = st.sidebar.file_uploader("Output CSV", type=["csv"])
-uploaded_export = st.sidebar.file_uploader("Output in CSV", type=["csv"])
+HF_REPO = "darisdzakwanhoesien/esg"
 
-# FIXED PATHS — data folder is at project root
-df_dataset, src_dataset = load_csv_uploaded_or_local(uploaded_dataset, "data/dataset.csv")
-df_output, src_output = load_csv_uploaded_or_local(uploaded_output, "data/output.csv")
-df_exported, src_exported = load_csv_uploaded_or_local(uploaded_export, "data/output_in_csv.csv")
+# -------------------------------------------------------
+# Helper: Select source & load dataframe
+# -------------------------------------------------------
+def load_source(selector, uploaded_file, local_path, hf_filename):
+    """Load from upload / local / HuggingFace depending on dropdown."""
+    
+    if selector == "Upload":
+        if uploaded_file is None:
+            return None, "Upload selected (no file uploaded)"
+        df = pd.read_csv(uploaded_file)
+        return df, "Uploaded File"
 
-# Check missing
+    elif selector == "Local file":
+        if not os.path.exists(local_path):
+            return None, f"Local file missing: {local_path}"
+        df = pd.read_csv(local_path)
+        return df, f"Local ({local_path})"
+
+    elif selector == "HuggingFace":
+        df, src = load_csv_from_hf(HF_REPO, hf_filename)
+        if df is None:
+            return None, f"HuggingFace load failed for {hf_filename}"
+        return df, src
+
+    return None, "Unknown source"
+
+
+# -------------------------------------------------------
+# Sidebar selectors
+# -------------------------------------------------------
+st.sidebar.header("📥 Dataset Source Selection")
+
+source_dataset = st.sidebar.selectbox(
+    "Dataset.csv source:",
+    ["Upload", "Local file", "HuggingFace"],
+    index=2  # default HuggingFace
+)
+
+source_output = st.sidebar.selectbox(
+    "output.csv source:",
+    ["Upload", "Local file", "HuggingFace"],
+    index=2
+)
+
+source_export = st.sidebar.selectbox(
+    "output_in_csv.csv source:",
+    ["Upload", "Local file", "HuggingFace"],
+    index=2
+)
+
+uploaded_dataset = st.sidebar.file_uploader("Upload Dataset.csv", type=["csv"])
+uploaded_output = st.sidebar.file_uploader("Upload Output.csv", type=["csv"])
+uploaded_export = st.sidebar.file_uploader("Upload Output_in_csv.csv", type=["csv"])
+
+
+# -------------------------------------------------------
+# Load each dataset based on dropdown choice
+# -------------------------------------------------------
+df_dataset, src_dataset = load_source(
+    source_dataset,
+    uploaded_dataset,
+    "data/dataset.csv",
+    "Dataset.csv"
+)
+
+df_output, src_output = load_source(
+    source_output,
+    uploaded_output,
+    "data/output.csv",
+    "output.csv"
+)
+
+df_exported, src_exported = load_source(
+    source_export,
+    uploaded_export,
+    "data/output_in_csv.csv",
+    "output_in_csv.csv"
+)
+
+
+# -------------------------------------------------------
+# Validation
+# -------------------------------------------------------
 missing = []
 if df_dataset is None:
     missing.append("Dataset")
@@ -38,19 +109,22 @@ if df_exported is None:
     missing.append("Output in CSV")
 
 if missing:
-    st.warning(f"Missing datasets: {', '.join(missing)}.\n\n"
-               "You can upload them in the sidebar or place them inside the `data/` folder.")
+    st.error(
+        "Missing or failed to load: " + ", ".join(missing) +
+        "\n\nPlease check your source selection or uploads."
+    )
     st.stop()
 
-# Show load sources
-st.sidebar.success(f"Dataset → Loaded from **{src_dataset}**")
-st.sidebar.success(f"Output → Loaded from **{src_output}**")
-st.sidebar.success(f"Output in CSV → Loaded from **{src_exported}**")
+# Show sources
+st.sidebar.success(f"Dataset → **{src_dataset}**")
+st.sidebar.success(f"Output → **{src_output}**")
+st.sidebar.success(f"Output in CSV → **{src_exported}**")
 
-st.success("All datasets loaded successfully!")
+st.success("✅ All datasets loaded successfully!")
+
 
 # ==========================================================
-# 🔍 Core Logic — Find missing Output entries in Exported CSV
+# 🔍 Core Logic — Compare Output vs Exported CSV
 # ==========================================================
 st.header("🔍 Compare Output vs Exported CSV")
 
@@ -70,11 +144,11 @@ st.download_button(
 )
 
 # Optional previews
-with st.expander("📄 View Loaded Dataset (dataset.csv)"):
+with st.expander("📄 Preview: Dataset.csv"):
     st.dataframe(df_dataset.head(), use_container_width=True)
 
-with st.expander("📄 View Loaded Output (output.csv)"):
+with st.expander("📄 Preview: Output.csv"):
     st.dataframe(df_output.head(), use_container_width=True)
 
-with st.expander("📄 View Loaded Output in CSV (output_in_csv.csv)"):
+with st.expander("📄 Preview: Output_in_csv.csv"):
     st.dataframe(df_exported.head(), use_container_width=True)
