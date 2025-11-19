@@ -8,3 +8,7 @@ huggingface-hub==0.19.4   # used for InferenceApi
 scikit-learn>=1.2
 python-dotenv>=1.0
 torch
+
+transformers==4.44.2
+tokenizers>=0.20.0
+huggingface_hub==0.26.1
