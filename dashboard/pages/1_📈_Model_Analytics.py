@@ -206,8 +206,6 @@
 # st.success("Analytics loaded successfully!")
 
 # Import necessary libraries
-import torch
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -224,13 +222,13 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
 sys.path.append(PROJECT_ROOT)
 
-# Now safe to import project modules
-# from deployment.model_utils import load_model_from_hub, predict_texts
+# Import utilities
 from dashboard.model_utils import (
     load_local_model_from_hub,
     make_local_prediction,
     make_hf_api_prediction,
-    torch_available, predict_texts
+    torch_available,
+    predict_texts
 )
 
 HF_REPO = "darisdzakwanhoesien/bertesg_tone"
@@ -238,11 +236,7 @@ HF_REPO = "darisdzakwanhoesien/bertesg_tone"
 # ------------------------------------------------------------
 # PAGE CONFIG
 # ------------------------------------------------------------
-st.set_page_config(
-    page_title="ESG Model Analytics",
-    page_icon="📈",
-    layout="wide"
-)
+st.set_page_config(page_title="ESG Model Analytics", page_icon="📈", layout="wide")
 
 st.title("📈 ESG MultiTask FinBERT — Model Analytics Dashboard")
 st.write("Explore dataset statistics, sentiment/tone distributions, and model behavior.")
@@ -260,14 +254,25 @@ def load_dataset():
 df = load_dataset()
 
 # ------------------------------------------------------------
-# LOAD MODEL
+# LOAD MODEL (AUTO SWITCH: LOCAL OR CLOUD)
 # ------------------------------------------------------------
 @st.cache_resource
 def load_model():
-    model, tokenizer, device =  load_local_model_from_hub(HF_REPO) # load_model_from_hub
-    return model, tokenizer, device
+    ON_STREAMLIT = os.getenv("STREAMLIT_RUNTIME") == "true"
 
-model, tokenizer, device = load_model()
+    if ON_STREAMLIT:
+        st.warning("🌐 Running on Streamlit Cloud — using HuggingFace Inference API.")
+        return ("api", None, None, None)
+
+    if torch_available():
+        st.info("💻 Running locally — loading PyTorch model.")
+        model, tokenizer, device = load_local_model_from_hub(HF_REPO)
+        return ("local", model, tokenizer, device)
+
+    st.warning("⚠️ Torch not available — using HuggingFace Inference API.")
+    return ("api", None, None, None)
+
+mode, model, tokenizer, device = load_model()
 
 # ------------------------------------------------------------
 # SIDEBAR FILTERS
@@ -289,15 +294,11 @@ tone_filter = st.sidebar.multiselect(
     options=sorted(df["tone"].dropna().unique().tolist()),
 )
 
-# Apply filters
 filtered_df = df.copy()
-
 if aspect_filter:
     filtered_df = filtered_df[filtered_df["aspect_category"].isin(aspect_filter)]
-
 if sentiment_filter:
     filtered_df = filtered_df[filtered_df["sentiment"].isin(sentiment_filter)]
-
 if tone_filter:
     filtered_df = filtered_df[filtered_df["tone"].isin(tone_filter)]
 
@@ -320,24 +321,11 @@ sentiment_counts.columns = ["sentiment", "count"]
 col1, col2 = st.columns(2)
 
 with col1:
-    fig1 = px.bar(
-        sentiment_counts,
-        x="sentiment",
-        y="count",
-        color="sentiment",
-        title="Sentiment Distribution (Bar Chart)",
-        text="count"
-    )
+    fig1 = px.bar(sentiment_counts, x="sentiment", y="count", color="sentiment", text="count")
     st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
-    fig2 = px.pie(
-        sentiment_counts,
-        names="sentiment",
-        values="count",
-        hole=0.35,
-        title="Sentiment Composition (Pie Chart)"
-    )
+    fig2 = px.pie(sentiment_counts, names="sentiment", values="count", hole=0.35)
     st.plotly_chart(fig2, use_container_width=True)
 
 # ------------------------------------------------------------
@@ -352,28 +340,15 @@ tone_counts.columns = ["tone", "count"]
 col3, col4 = st.columns(2)
 
 with col3:
-    fig3 = px.bar(
-        tone_counts,
-        x="tone",
-        y="count",
-        color="tone",
-        title="Tone Distribution (Bar Chart)",
-        text="count"
-    )
+    fig3 = px.bar(tone_counts, x="tone", y="count", color="tone", text="count")
     st.plotly_chart(fig3, use_container_width=True)
 
 with col4:
-    fig4 = px.pie(
-        tone_counts,
-        names="tone",
-        values="count",
-        hole=0.35,
-        title="Tone Composition (Pie Chart)"
-    )
+    fig4 = px.pie(tone_counts, names="tone", values="count", hole=0.35)
     st.plotly_chart(fig4, use_container_width=True)
 
 # ------------------------------------------------------------
-# CORRELATION (SENTIMENT × TONE)
+# SENTIMENT × TONE HEATMAP
 # ------------------------------------------------------------
 st.markdown("---")
 st.subheader("🔗 Sentiment × Tone Correlation")
@@ -385,13 +360,12 @@ sns.heatmap(pivot, annot=True, cmap="Blues", fmt="d", ax=ax)
 st.pyplot(fig5)
 
 # ------------------------------------------------------------
-# WORDCLOUD
+# WORD CLOUD
 # ------------------------------------------------------------
 st.markdown("---")
-st.subheader("☁ Word Cloud (Sentences)")
+st.subheader("☁ Word Cloud")
 
 text_blob = " ".join(filtered_df["sentence"].astype(str).tolist())
-
 wc = WordCloud(width=1200, height=600, background_color="white").generate(text_blob)
 
 fig6, ax2 = plt.subplots(figsize=(12, 6))
@@ -400,7 +374,7 @@ ax2.axis("off")
 st.pyplot(fig6)
 
 # ------------------------------------------------------------
-# SAMPLE MODEL PREDICTION
+# PREDICT SAMPLE
 # ------------------------------------------------------------
 st.markdown("---")
 st.subheader("🧠 Try Model on Random Samples")
@@ -409,14 +383,13 @@ if st.button("Generate Predictions for Random 5 Samples"):
     sample_df = filtered_df.sample(5)
     texts = sample_df["sentence"].tolist()
 
-    preds = predict_texts(model, tokenizer, texts, device=device)
+    if mode == "local":
+        preds = predict_texts(model, tokenizer, texts, device=device)
+    else:
+        preds = make_hf_api_prediction(texts)
 
     result_df = pd.DataFrame([
-        {
-            "sentence": p["text"],
-            "sentiment": p["sentiment"],
-            "tone": p["tone"]
-        }
+        {"sentence": p["text"], "sentiment": p["sentiment"], "tone": p["tone"]}
         for p in preds
     ])
 
