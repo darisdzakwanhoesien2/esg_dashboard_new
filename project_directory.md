@@ -7,16 +7,16 @@
 <details><summary>📁 dashboard/</summary>
     📄 .DS_Store<br>
     📄 app.py<br>
-  <details><summary>📁 data/</summary>
-      📄 dataset.csv<br>
-      📄 output.csv<br>
-      📄 output_in_csv.csv<br>
-  </details>
     📄 finbert_model.py<br>
     📄 model_utils.py<br>
   <details><summary>📁 pages/</summary>
       📄 data.py<br>
   </details>
+</details>
+<details><summary>📁 data/</summary>
+    📄 .DS_Store<br>
+    📄 output.csv<br>
+    📄 output_in_csv.csv<br>
 </details>
 <details><summary>📁 pages/</summary>
 </details>

@@ -5,10 +5,9 @@ import pandas as pd
 import sys
 import os
 
-# Add the project root to sys.path
+# Add project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-# Import the function
 from utils.data_loader import load_csv_uploaded_or_local
 from utils.compare_logic import find_missing
 
@@ -24,10 +23,10 @@ uploaded_dataset = st.sidebar.file_uploader("Dataset CSV", type=["csv"])
 uploaded_output = st.sidebar.file_uploader("Output CSV", type=["csv"])
 uploaded_export = st.sidebar.file_uploader("Output in CSV", type=["csv"])
 
-# Load all datasets using hybrid logic
-df_dataset, src_dataset = load_csv_uploaded_or_local(uploaded_dataset, "dataset.csv")
-df_output, src_output = load_csv_uploaded_or_local(uploaded_output, "output.csv")
-df_exported, src_exported = load_csv_uploaded_or_local(uploaded_export, "output_in_csv.csv")
+# FIXED PATHS — data folder is at project root
+df_dataset, src_dataset = load_csv_uploaded_or_local(uploaded_dataset, "data/dataset.csv")
+df_output, src_output = load_csv_uploaded_or_local(uploaded_output, "data/output.csv")
+df_exported, src_exported = load_csv_uploaded_or_local(uploaded_export, "data/output_in_csv.csv")
 
 # Check missing
 missing = []
@@ -40,7 +39,7 @@ if df_exported is None:
 
 if missing:
     st.warning(f"Missing datasets: {', '.join(missing)}.\n\n"
-               "You can upload them in the sidebar or place them inside `dashboard/data/`.")
+               "You can upload them in the sidebar or place them inside the `data/` folder.")
     st.stop()
 
 # Show load sources
@@ -70,7 +69,7 @@ st.download_button(
     mime="text/csv",
 )
 
-# Optional: Display previews of loaded datasets
+# Optional previews
 with st.expander("📄 View Loaded Dataset (dataset.csv)"):
     st.dataframe(df_dataset.head(), use_container_width=True)
 
