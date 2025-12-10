@@ -527,6 +527,204 @@ st.sidebar.caption("Adjust the resolution of the Sankey above.")
 #     else:
 #         st.sidebar.warning("No data available to build Sankey for the selected aspect.")
 
+# 4_Data_Subset_final.py
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import os
+import sys
+from io import BytesIO
+
+# ---------------------------
+# MUST RUN FIRST (Streamlit requirement)
+# ---------------------------
+st.set_page_config(page_title="ESG Subset & Sankey", layout="wide")
+
+# ---------------------------
+# PATHS / CONSTANTS
+# ---------------------------
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+sys.path.append(PROJECT_ROOT)
+
+DATA_PATH = os.path.join(PROJECT_ROOT, "data", "output_in_csv.csv")
+
+# Developer-provided image path from conversation history (use as reference)
+UPLOADED_IMAGE_PATH = "/mnt/data/Screenshot 2025-11-21 at 10.57.18.png"
+
+# ---------------------------
+# HELPERS
+# ---------------------------
+@st.cache_data
+def load_dataset(path=DATA_PATH):
+    df_local = pd.read_csv(path)
+    df_local.columns = df_local.columns.str.lower().str.strip()
+    return df_local
+
+def build_sankey_from_df(df_in, top_n_aspects=20, top_n_sentiments=10, top_n_tones=10):
+    """
+    Build Sankey nodes & links for Aspect -> Sentiment -> Tone.
+    Keeps only top-N nodes per layer to reduce clutter.
+    Returns a plotly Figure or None if insufficient data.
+    """
+    if df_in is None or df_in.empty:
+        return None
+
+    # Frequencies
+    aspect_freq = df_in["aspect_category"].value_counts()
+    sentiment_freq = df_in["sentiment"].value_counts()
+    tone_freq = df_in["tone"].value_counts()
+
+    top_aspects = aspect_freq.head(top_n_aspects).index.tolist()
+    top_sentiments = sentiment_freq.head(top_n_sentiments).index.tolist()
+    top_tones = tone_freq.head(top_n_tones).index.tolist()
+
+    # Keep only rows that include nodes of interest (some flexibility)
+    df_filtered = df_in[
+        df_in["aspect_category"].isin(top_aspects) |
+        df_in["sentiment"].isin(top_sentiments) |
+        df_in["tone"].isin(top_tones)
+    ]
+
+    if df_filtered.empty:
+        return None
+
+    # Node ordering: aspects, sentiments, tones
+    nodes = top_aspects + [s for s in top_sentiments if s not in top_aspects] + [t for t in top_tones if t not in (top_aspects + top_sentiments)]
+    node_index = {n: i for i, n in enumerate(nodes)}
+
+    # Links
+    a_to_s = df_filtered.groupby(["aspect_category", "sentiment"]).size().reset_index(name="value")
+    s_to_t = df_filtered.groupby(["sentiment", "tone"]).size().reset_index(name="value")
+
+    source = []
+    target = []
+    value = []
+
+    for _, r in a_to_s.iterrows():
+        a, s, v = r["aspect_category"], r["sentiment"], int(r["value"])
+        if a in node_index and s in node_index:
+            source.append(node_index[a]); target.append(node_index[s]); value.append(v)
+
+    for _, r in s_to_t.iterrows():
+        s, t, v = r["sentiment"], r["tone"], int(r["value"])
+        if s in node_index and t in node_index:
+            source.append(node_index[s]); target.append(node_index[t]); value.append(v)
+
+    if not nodes or not source:
+        return None
+
+    # Colors per layer for readability
+    colors = []
+    n_as = len(top_aspects)
+    n_sent = len([s for s in top_sentiments if s not in top_aspects])
+    n_tone = len([t for t in top_tones if t not in (top_aspects + top_sentiments)])
+    for i in range(len(nodes)):
+        if i < n_as:
+            colors.append("rgba(55,126,184,0.7)")
+        elif i < n_as + n_sent:
+            colors.append("rgba(77,175,74,0.7)")
+        else:
+            colors.append("rgba(228,26,28,0.7)")
+
+    fig = go.Figure(data=[go.Sankey(
+        arrangement="snap",
+        node=dict(label=nodes, pad=15, thickness=18, color=colors),
+        link=dict(source=source, target=target, value=value)
+    )])
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=480)
+    return fig
+
+def ensure_take_n(rule, default=10):
+    if "take_n" not in rule or not isinstance(rule["take_n"], int):
+        rule["take_n"] = default
+
+def safe_index_choice(current_value, choices):
+    try:
+        return (["(Any)"] + choices).index(current_value)
+    except Exception:
+        return 0
+
+def df_to_csv_bytes(df_obj):
+    return df_obj.to_csv(index=False).encode("utf-8")
+
+# ---------------------------
+# LOAD DATA
+# ---------------------------
+df = load_dataset(DATA_PATH)
+
+# Basic validations
+required_cols = ["aspect_category", "sentiment", "tone"]
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    st.error(f"Required columns missing: {missing}")
+    st.stop()
+
+aspect_options = sorted(df["aspect_category"].dropna().unique().tolist())
+sentiment_options = sorted(df["sentiment"].dropna().unique().tolist())
+tone_options = sorted(df["tone"].dropna().unique().tolist())
+
+# ---------------------------
+# SIDEBAR: Waterfall filter (moved)
+# ---------------------------
+st.sidebar.header("1️⃣ Waterfall Filter (Step-by-step)")
+
+selected_aspect = st.sidebar.selectbox("Aspect Category", ["(All)"] + aspect_options, index=0)
+df_step1 = df if selected_aspect == "(All)" else df[df["aspect_category"] == selected_aspect]
+st.sidebar.caption(f"Matching rows after Aspect filter: {len(df_step1):,}")
+
+sentiment_dynamic = sorted(df_step1["sentiment"].dropna().unique().tolist())
+selected_sentiment = st.sidebar.selectbox("Sentiment", ["(All)"] + sentiment_dynamic, index=0)
+df_step2 = df_step1 if selected_sentiment == "(All)" else df_step1[df_step1["sentiment"] == selected_sentiment]
+st.sidebar.caption(f"Matching rows after Sentiment filter: {len(df_step2):,}")
+
+tone_dynamic = sorted(df_step2["tone"].dropna().unique().tolist())
+selected_tone = st.sidebar.selectbox("Tone", ["(All)"] + tone_dynamic, index=0)
+df_filtered = df_step2 if selected_tone == "(All)" else df_step2[df_step2["tone"] == selected_tone]
+st.sidebar.success(f"🎯 Final Waterfall Count: {len(df_filtered):,}")
+
+# Show reference image (if exists)
+if os.path.exists(UPLOADED_IMAGE_PATH):
+    st.sidebar.markdown("---")
+    st.sidebar.image(UPLOADED_IMAGE_PATH, caption="Reference screenshot", use_column_width=True)
+
+# ---------------------------------------------------------
+# Define sliders FIRST (even if visually below)
+# ---------------------------------------------------------
+top_n_aspects = st.sidebar.slider("Top N aspects (sankey)", 3, 50, 20, key="topA")
+top_n_sent = st.sidebar.slider("Top N sentiments (sankey)", 3, 30, 12, key="topS")
+top_n_tone = st.sidebar.slider("Top N tones (sankey)", 3, 30, 12, key="topT")
+
+# ---------------------------------------------------------
+# Put Sankey ABOVE sliders using a container
+# ---------------------------------------------------------
+cond_sankey_container = st.sidebar.container()
+
+cond_sankey_container.markdown("---")
+cond_sankey_container.header("Conditional Sankey (selected aspect)")
+
+if selected_aspect == "(All)":
+    cond_sankey_container.info("Select an Aspect to view the Sankey.")
+else:
+    subset_df = df[df["aspect_category"] == selected_aspect]
+    sankey_fig = build_sankey_from_df(
+        subset_df,
+        top_n_aspects=1,
+        top_n_sentiments=top_n_sent,
+        top_n_tones=top_n_tone
+    )
+    if sankey_fig:
+        cond_sankey_container.plotly_chart(sankey_fig, use_container_width=True)
+    else:
+        cond_sankey_container.warning("No data to build Sankey for this Aspect.")
+
+# ---------------------------------------------------------
+# NOW visually place sliders below Sankey
+# ---------------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("Sankey Controls")
+st.sidebar.caption("Adjust the resolution of the Sankey above.")
+
 # ---------------------------
 # MAIN: Page header & Global sankey
 # ---------------------------
