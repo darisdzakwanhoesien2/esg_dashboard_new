@@ -206,15 +206,17 @@ st.caption(f"Showing **{len(filtered)}** sentences after filtering.")
 # -------------------------------------------------------
 # Tabs
 # -------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 Distributions",
     "📌 Aspects",
     "📄 Sentence Table",
-    "🤖 LLM Model Comparison",
+    "🤖 Model Comparison",
     "LLM Breakdown",
     "🧮 Model Coverage",
-    "📦 Raw JSON View"
+    "📦 Raw JSON View",
+    "📊 Grounding Audit"
 ])
+
 
 # -------------------------------------------------------
 # TAB 1 — Distributions
@@ -951,6 +953,164 @@ with tab7:
             with st.expander("📊 Normalized Table"):
                 st.dataframe(pd.json_normalize(parsed), use_container_width=True)
 
+# -------------------------------------------------------
+# TAB 8 — Cross-Document Grounding Audit
+# -------------------------------------------------------
+with tab8:
+    st.subheader("📊 Cross-Document Grounding Audit")
+
+    # ---------------------------------------------------
+    # Helper: sentence grounding check
+    # ---------------------------------------------------
+    def is_sentence_grounded(sentence, md_full, md_clean):
+        if not isinstance(sentence, str):
+            return False
+        return (
+            sentence in str(md_full)
+            or sentence in str(md_clean)
+        )
+
+    # ---------------------------------------------------
+    # PREPARE PAGE-LEVEL DATA
+    # ---------------------------------------------------
+    audit_rows = []
+    llm_models = sorted(filtered["model"].dropna().unique())
+
+    grouped = filtered.groupby(["filename", "page_number"])
+
+    for (filename, page), group in grouped:
+        row0 = group.iloc[0]
+        md_full = row0.get("markdown_full", "")
+        md_clean = row0.get("cleaned_markdown", "")
+
+        sentences = group["sentence"].dropna().unique().tolist()
+
+        grounded_flags = {
+            s: is_sentence_grounded(s, md_full, md_clean)
+            for s in sentences
+        }
+
+        total_sentences = len(sentences)
+        grounded_count = sum(grounded_flags.values())
+        not_grounded_count = total_sentences - grounded_count
+
+        num_llms = group["model"].nunique()
+
+        base_row = {
+            "filename": filename,
+            "page_number": page,
+            "num_llms": num_llms,
+            "total_sentences": total_sentences,
+            "grounded": grounded_count,
+            "not_grounded": not_grounded_count,
+        }
+
+
+        # per-LLM counts
+        for model in llm_models:
+            model_group = group[group["model"] == model]
+            model_sentences = model_group["sentence"].dropna().unique().tolist()
+
+            model_grounded = sum(
+                is_sentence_grounded(s, md_full, md_clean)
+                for s in model_sentences
+            )
+            model_not = len(model_sentences) - model_grounded
+
+            base_row[f"{model}_grounded"] = model_grounded
+            base_row[f"{model}_not_grounded"] = model_not
+
+        audit_rows.append(base_row)
+
+    page_level_df = pd.DataFrame(audit_rows)
+
+    st.markdown("## 🧾 Table 1 — Page-Level Grounding Scorecard")
+    st.dataframe(page_level_df, use_container_width=True)
+
+    # ---------------------------------------------------
+    # PAGE SELECTION FOR DRILL-DOWN
+    # ---------------------------------------------------
+    st.markdown("## 🔍 Drill-Down: Sentence-Level Audit")
+
+    sel_file = st.selectbox(
+        "Select Filename",
+        sorted(page_level_df["filename"].unique()),
+        key="audit_file"
+    )
+
+    sel_pages = sorted(
+        page_level_df[page_level_df["filename"] == sel_file]["page_number"].unique()
+    )
+
+    sel_page = st.selectbox(
+        "Select Page",
+        sel_pages,
+        key="audit_page"
+    )
+
+    page_subset = filtered[
+        (filtered["filename"] == sel_file) &
+        (filtered["page_number"] == sel_page)
+    ]
+
+    if page_subset.empty:
+        st.warning("No data for selected file/page.")
+        st.stop()
+
+    row0 = page_subset.iloc[0]
+    md_full = row0.get("markdown_full", "")
+    md_clean = row0.get("cleaned_markdown", "")
+
+    # ---------------------------------------------------
+    # BUILD SENTENCE-LEVEL TABLES
+    # ---------------------------------------------------
+    sentence_rows = []
+
+    for _, r in page_subset.iterrows():
+        grounded = is_sentence_grounded(
+            r["sentence"], md_full, md_clean
+        )
+
+        sentence_rows.append({
+            "filename": r["filename"],
+            "page_number": r["page_number"],
+            "sentence": r["sentence"],
+            "aspect": r.get("aspect"),
+            "sentiment": r.get("sentiment"),
+            "model": r["model"],
+            "grounded": grounded
+        })
+
+    sentence_df = pd.DataFrame(sentence_rows)
+
+    grounded_df = sentence_df[sentence_df["grounded"]]
+    not_grounded_df = sentence_df[~sentence_df["grounded"]]
+
+    # ---------------------------------------------------
+    # TABLE 2 — GROUNDED SENTENCES
+    # ---------------------------------------------------
+    st.markdown("## ✅ Table 2 — Grounded Sentences")
+
+    if grounded_df.empty:
+        st.info("No grounded sentences on this page.")
+    else:
+        st.dataframe(
+            grounded_df.drop(columns=["grounded"]),
+            use_container_width=True
+        )
+
+    # ---------------------------------------------------
+    # TABLE 3 — NOT-GROUNDED SENTENCES
+    # ---------------------------------------------------
+    st.markdown("## 🚨 Table 3 — Not-Grounded Sentences")
+
+    if not_grounded_df.empty:
+        st.success("🎉 No hallucinated sentences detected on this page.")
+    else:
+        st.dataframe(
+            not_grounded_df.drop(columns=["grounded"]),
+            use_container_width=True
+        )
 
 # import streamlit as st
 # import pandas as pd
