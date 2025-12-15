@@ -251,10 +251,10 @@ with tab3:
     st.dataframe(filtered[show_cols], use_container_width=True)
 
 # -------------------------------------------------------
-# TAB 4 — Model Comparison (WITH MARKDOWN VISUALIZATION)
+# TAB 4 — Model Comparison (ORIGINAL vs HIGHLIGHTED MARKDOWN)
 # -------------------------------------------------------
 with tab4:
-    st.subheader("🤖 LLM Model Comparison (Page-Level)")
+    st.subheader("🤖 LLM Model Comparison (Grounded & Auditable)")
 
     # ---------------------------------------------------
     # File & Page Selection
@@ -289,38 +289,94 @@ with tab4:
     )
 
     if comp["missing_count"] > 0:
-        st.warning(
-            f"Missing models: {', '.join(comp['missing'])}"
-        )
+        st.warning(f"Missing models: {', '.join(comp['missing'])}")
 
     # ---------------------------------------------------
-    # MARKDOWN CONTEXT (SOURCE OF TRUTH)
+    # Sentence Index (GLOBAL FOR THIS PAGE)
     # ---------------------------------------------------
-    st.markdown("## 📄 Source Text (Same for All Models)")
+    sentences = list(dict.fromkeys(subset["sentence"].dropna().tolist()))
+    sentence_index = {s: i + 1 for i, s in enumerate(sentences)}
 
-    # Take FIRST row — guaranteed same per file+page
+    # ---------------------------------------------------
+    # Highlight Helper
+    # ---------------------------------------------------
+    def highlight_sentences(text, sentence_index):
+        if not isinstance(text, str):
+            return ""
+
+        highlighted = text
+        for sentence, idx in sentence_index.items():
+            if sentence in highlighted:
+                highlighted = highlighted.replace(
+                    sentence,
+                    f"<span style='background-color:#fff59d; padding:2px; "
+                    f"border-radius:4px; font-weight:500;'>"
+                    f"[{idx}] {sentence}"
+                    f"</span>"
+                )
+        return highlighted
+
+    # ---------------------------------------------------
+    # Extract Page-Level Markdown (same for all models)
+    # ---------------------------------------------------
     row0 = subset.iloc[0]
+
+    md_full = row0.get("markdown_full", "")
+    md_clean = row0.get("cleaned_markdown", "")
+
+    # ---------------------------------------------------
+    # MARKDOWN VISUALIZATION
+    # ---------------------------------------------------
+    st.markdown("## 📄 Source Text vs Highlighted ESG Sentences")
+
+    # ---- markdown_full ----
+    st.markdown("### 🧾 markdown_full")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 🧾 markdown_full")
-        if "markdown_full" in row0 and pd.notna(row0["markdown_full"]):
-            st.markdown(row0["markdown_full"])
-        else:
-            st.info("No markdown_full available.")
+        st.markdown("**Original**")
+        st.markdown(md_full if md_full else "_No markdown_full_", unsafe_allow_html=True)
 
     with col2:
-        st.markdown("### ✂️ cleaned_markdown")
-        if "cleaned_markdown" in row0 and pd.notna(row0["cleaned_markdown"]):
-            st.markdown(row0["cleaned_markdown"])
-        else:
-            st.info("No cleaned_markdown available.")
+        st.markdown("**Highlighted**")
+        st.markdown(
+            highlight_sentences(md_full, sentence_index),
+            unsafe_allow_html=True
+        )
+
+    # ---- cleaned_markdown ----
+    st.markdown("### ✂️ cleaned_markdown")
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        st.markdown("**Original**")
+        st.markdown(md_clean if md_clean else "_No cleaned_markdown_", unsafe_allow_html=True)
+
+    with col4:
+        st.markdown("**Highlighted**")
+        st.markdown(
+            highlight_sentences(md_clean, sentence_index),
+            unsafe_allow_html=True
+        )
+
+    # ---------------------------------------------------
+    # Sentence Legend
+    # ---------------------------------------------------
+    st.markdown("## 🏷 Sentence Index (Reference)")
+
+    legend_df = pd.DataFrame({
+        "Index": [sentence_index[s] for s in sentences],
+        "Sentence": sentences
+    })
+
+    st.dataframe(legend_df, use_container_width=True)
 
     # ---------------------------------------------------
     # Sentence-Level Model Comparison
     # ---------------------------------------------------
-    st.markdown("## 🔍 Sentence-Level Comparison Across Models")
+    st.markdown("## 🔍 Sentence-Level Model Comparison")
 
     pivot = subset.pivot_table(
         index="sentence",
@@ -333,54 +389,315 @@ with tab4:
     st.dataframe(pivot, use_container_width=True)
 
     # ---------------------------------------------------
-    # Sentence Existence Check (PER SENTENCE)
+    # Presence Validation
     # ---------------------------------------------------
-    st.markdown("## ✅ Sentence Presence Check (Against Source Text)")
-
-    markdown_full = str(row0.get("markdown_full", "") or "")
-    cleaned_markdown = str(row0.get("cleaned_markdown", "") or "")
-    raw_text = str(row0.get("text", "") or "")
-
-    def sentence_presence(sentence):
-        return {
-            "in_text": sentence in raw_text,
-            "in_markdown_full": sentence in markdown_full,
-            "in_cleaned_markdown": sentence in cleaned_markdown
-        }
+    st.markdown("## ✅ Sentence Grounding Check")
 
     presence_rows = []
-    for sent in pivot.index:
-        presence = sentence_presence(sent)
+    for s in sentences:
         presence_rows.append({
-            "sentence": sent,
-            "in_text": presence["in_text"],
-            "in_markdown_full": presence["in_markdown_full"],
-            "in_cleaned_markdown": presence["in_cleaned_markdown"],
-            "found_anywhere": any(presence.values())
+            "index": sentence_index[s],
+            "sentence": s,
+            "in_markdown_full": s in str(md_full),
+            "in_cleaned_markdown": s in str(md_clean)
         })
 
     presence_df = pd.DataFrame(presence_rows)
-
-    st.dataframe(
-        presence_df,
-        use_container_width=True
+    presence_df["found_anywhere"] = (
+        presence_df["in_markdown_full"] |
+        presence_df["in_cleaned_markdown"]
     )
 
-    # ---------------------------------------------------
-    # Highlight Missing Sentences
-    # ---------------------------------------------------
-    missing = presence_df[~presence_df["found_anywhere"]]
+    st.dataframe(presence_df, use_container_width=True)
 
+    missing = presence_df[~presence_df["found_anywhere"]]
     if not missing.empty:
         st.warning(
-            f"⚠️ {len(missing)} sentences are NOT found in markdown_full / cleaned_markdown / raw text."
+            f"⚠️ {len(missing)} sentences are NOT grounded in the source markdown."
         )
         st.dataframe(
-            missing[["sentence"]],
+            missing[["index", "sentence"]],
             use_container_width=True
         )
     else:
-        st.success("✅ All extracted sentences exist in the source text.")
+        st.success("✅ All ESG sentences are grounded in the source text.")
+
+
+# # -------------------------------------------------------
+# # TAB 4 — Model Comparison (WITH HIGHLIGHTED MARKDOWN)
+# # -------------------------------------------------------
+# with tab4:
+#     st.subheader("🤖 LLM Model Comparison (Page-Level with Highlighting)")
+
+#     # ---------------------------------------------------
+#     # File & Page Selection
+#     # ---------------------------------------------------
+#     filenames = sorted(filtered["filename"].unique())
+#     selected_file = st.selectbox("Filename", filenames, key="mc_file")
+
+#     pages = sorted(
+#         filtered[filtered["filename"] == selected_file]["page_number"].unique()
+#     )
+#     selected_page = st.selectbox("Page Number", pages, key="mc_page")
+
+#     subset = filtered[
+#         (filtered["filename"] == selected_file) &
+#         (filtered["page_number"] == selected_page)
+#     ]
+
+#     if subset.empty:
+#         st.warning("No data for this file & page.")
+#         st.stop()
+
+#     # ---------------------------------------------------
+#     # Model Completeness
+#     # ---------------------------------------------------
+#     df_pdf = filtered[filtered["filename"] == selected_file]
+#     comp = model_completeness(df_pdf, subset)
+
+#     st.metric(
+#         "Model Completeness",
+#         f"{comp['score']*100:.1f}%",
+#         help=f"Present: {comp['present_count']} / {comp['total']}"
+#     )
+
+#     if comp["missing_count"] > 0:
+#         st.warning(f"Missing models: {', '.join(comp['missing'])}")
+
+#     # ---------------------------------------------------
+#     # Sentence Index (GLOBAL FOR THIS PAGE)
+#     # ---------------------------------------------------
+#     sentences = list(dict.fromkeys(subset["sentence"].dropna().tolist()))
+#     sentence_index = {s: i + 1 for i, s in enumerate(sentences)}
+
+#     # ---------------------------------------------------
+#     # Highlight Helper
+#     # ---------------------------------------------------
+#     def highlight_sentences(text, sentence_index):
+#         if not isinstance(text, str):
+#             return ""
+
+#         highlighted = text
+#         for sentence, idx in sentence_index.items():
+#             if sentence in highlighted:
+#                 highlighted = highlighted.replace(
+#                     sentence,
+#                     f"<span style='background-color:#fff59d; padding:2px; border-radius:3px;'>"
+#                     f"[{idx}] {sentence}"
+#                     f"</span>"
+#                 )
+#         return highlighted
+
+#     # ---------------------------------------------------
+#     # MARKDOWN CONTEXT WITH HIGHLIGHTING
+#     # ---------------------------------------------------
+#     st.markdown("## 📄 Source Text (Highlighted ESG Sentences)")
+
+#     row0 = subset.iloc[0]
+
+#     md_full = row0.get("markdown_full", "")
+#     md_clean = row0.get("cleaned_markdown", "")
+
+#     col1, col2 = st.columns(2)
+
+#     with col1:
+#         st.markdown("### 🧾 markdown_full")
+#         highlighted_md_full = highlight_sentences(md_full, sentence_index)
+#         st.markdown(highlighted_md_full, unsafe_allow_html=True)
+
+#     with col2:
+#         st.markdown("### ✂️ cleaned_markdown")
+#         highlighted_md_clean = highlight_sentences(md_clean, sentence_index)
+#         st.markdown(highlighted_md_clean, unsafe_allow_html=True)
+
+#     # ---------------------------------------------------
+#     # Sentence Legend
+#     # ---------------------------------------------------
+#     st.markdown("## 🏷 Sentence Index")
+#     legend_df = pd.DataFrame({
+#         "Index": [sentence_index[s] for s in sentences],
+#         "Sentence": sentences
+#     })
+#     st.dataframe(legend_df, use_container_width=True)
+
+#     # ---------------------------------------------------
+#     # Sentence-Level Model Comparison
+#     # ---------------------------------------------------
+#     st.markdown("## 🔍 Sentence-Level Model Comparison")
+
+#     pivot = subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="sentiment",
+#         aggfunc="first"
+#     )
+
+#     pivot = ensure_all_models(df_pdf, pivot)
+#     st.dataframe(pivot, use_container_width=True)
+
+#     # ---------------------------------------------------
+#     # Presence Check
+#     # ---------------------------------------------------
+#     st.markdown("## ✅ Sentence Presence Validation")
+
+#     presence_rows = []
+#     for s in sentences:
+#         presence_rows.append({
+#             "index": sentence_index[s],
+#             "sentence": s,
+#             "in_markdown_full": s in str(md_full),
+#             "in_cleaned_markdown": s in str(md_clean)
+#         })
+
+#     presence_df = pd.DataFrame(presence_rows)
+#     presence_df["found_anywhere"] = (
+#         presence_df["in_markdown_full"] |
+#         presence_df["in_cleaned_markdown"]
+#     )
+
+#     st.dataframe(presence_df, use_container_width=True)
+
+#     missing = presence_df[~presence_df["found_anywhere"]]
+#     if not missing.empty:
+#         st.warning(
+#             f"⚠️ {len(missing)} sentences were NOT found in markdown_full / cleaned_markdown."
+#         )
+#         st.dataframe(missing[["index", "sentence"]], use_container_width=True)
+#     else:
+#         st.success("✅ All ESG sentences are grounded in the source markdown.")
+
+
+# # -------------------------------------------------------
+# # TAB 4 — Model Comparison (WITH MARKDOWN VISUALIZATION)
+# # -------------------------------------------------------
+# with tab4:
+#     st.subheader("🤖 LLM Model Comparison (Page-Level)")
+
+#     # ---------------------------------------------------
+#     # File & Page Selection
+#     # ---------------------------------------------------
+#     filenames = sorted(filtered["filename"].unique())
+#     selected_file = st.selectbox("Filename", filenames, key="mc_file")
+
+#     pages = sorted(
+#         filtered[filtered["filename"] == selected_file]["page_number"].unique()
+#     )
+#     selected_page = st.selectbox("Page Number", pages, key="mc_page")
+
+#     subset = filtered[
+#         (filtered["filename"] == selected_file) &
+#         (filtered["page_number"] == selected_page)
+#     ]
+
+#     if subset.empty:
+#         st.warning("No data for this file & page.")
+#         st.stop()
+
+#     # ---------------------------------------------------
+#     # Model Completeness
+#     # ---------------------------------------------------
+#     df_pdf = filtered[filtered["filename"] == selected_file]
+#     comp = model_completeness(df_pdf, subset)
+
+#     st.metric(
+#         "Model Completeness",
+#         f"{comp['score']*100:.1f}%",
+#         help=f"Present: {comp['present_count']} / {comp['total']}"
+#     )
+
+#     if comp["missing_count"] > 0:
+#         st.warning(
+#             f"Missing models: {', '.join(comp['missing'])}"
+#         )
+
+#     # ---------------------------------------------------
+#     # MARKDOWN CONTEXT (SOURCE OF TRUTH)
+#     # ---------------------------------------------------
+#     st.markdown("## 📄 Source Text (Same for All Models)")
+
+#     # Take FIRST row — guaranteed same per file+page
+#     row0 = subset.iloc[0]
+
+#     col1, col2 = st.columns(2)
+
+#     with col1:
+#         st.markdown("### 🧾 markdown_full")
+#         if "markdown_full" in row0 and pd.notna(row0["markdown_full"]):
+#             st.markdown(row0["markdown_full"])
+#         else:
+#             st.info("No markdown_full available.")
+
+#     with col2:
+#         st.markdown("### ✂️ cleaned_markdown")
+#         if "cleaned_markdown" in row0 and pd.notna(row0["cleaned_markdown"]):
+#             st.markdown(row0["cleaned_markdown"])
+#         else:
+#             st.info("No cleaned_markdown available.")
+
+#     # ---------------------------------------------------
+#     # Sentence-Level Model Comparison
+#     # ---------------------------------------------------
+#     st.markdown("## 🔍 Sentence-Level Comparison Across Models")
+
+#     pivot = subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="sentiment",
+#         aggfunc="first"
+#     )
+
+#     pivot = ensure_all_models(df_pdf, pivot)
+#     st.dataframe(pivot, use_container_width=True)
+
+#     # ---------------------------------------------------
+#     # Sentence Existence Check (PER SENTENCE)
+#     # ---------------------------------------------------
+#     st.markdown("## ✅ Sentence Presence Check (Against Source Text)")
+
+#     markdown_full = str(row0.get("markdown_full", "") or "")
+#     cleaned_markdown = str(row0.get("cleaned_markdown", "") or "")
+#     raw_text = str(row0.get("text", "") or "")
+
+#     def sentence_presence(sentence):
+#         return {
+#             "in_text": sentence in raw_text,
+#             "in_markdown_full": sentence in markdown_full,
+#             "in_cleaned_markdown": sentence in cleaned_markdown
+#         }
+
+#     presence_rows = []
+#     for sent in pivot.index:
+#         presence = sentence_presence(sent)
+#         presence_rows.append({
+#             "sentence": sent,
+#             "in_text": presence["in_text"],
+#             "in_markdown_full": presence["in_markdown_full"],
+#             "in_cleaned_markdown": presence["in_cleaned_markdown"],
+#             "found_anywhere": any(presence.values())
+#         })
+
+#     presence_df = pd.DataFrame(presence_rows)
+
+#     st.dataframe(
+#         presence_df,
+#         use_container_width=True
+#     )
+
+#     # ---------------------------------------------------
+#     # Highlight Missing Sentences
+#     # ---------------------------------------------------
+#     missing = presence_df[~presence_df["found_anywhere"]]
+
+#     if not missing.empty:
+#         st.warning(
+#             f"⚠️ {len(missing)} sentences are NOT found in markdown_full / cleaned_markdown / raw text."
+#         )
+#         st.dataframe(
+#             missing[["sentence"]],
+#             use_container_width=True
+#         )
+#     else:
+#         st.success("✅ All extracted sentences exist in the source text.")
 
 
 # # -------------------------------------------------------
