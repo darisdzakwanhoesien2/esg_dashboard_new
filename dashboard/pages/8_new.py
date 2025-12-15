@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import re
 
 # -------------------------------------------------------
 # Page Config
@@ -28,19 +29,75 @@ except Exception as e:
     st.error(f"❌ Failed to load CSV at: {DATA_PATH}\n\n{e}")
     st.stop()
 
+# =======================================================
+# ROBUST JSON PARSING (NEW)
+# =======================================================
+
+def extract_json_block(text):
+    """
+    Extract the first JSON array or object from messy LLM output.
+    """
+    if not isinstance(text, str):
+        return None
+
+    match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+    if not match:
+        return None
+
+    try:
+        return json.loads(match.group(1))
+    except Exception:
+        return None
+
+
+def normalize_json(obj):
+    """
+    Normalize JSON into flat list of dicts.
+    Handles dicts, lists, nested lists.
+    """
+    if obj is None:
+        return []
+
+    if isinstance(obj, dict):
+        return [obj]
+
+    if isinstance(obj, list):
+        flat = []
+        for item in obj:
+            flat.extend(normalize_json(item))
+        return flat
+
+    return []
+
+
+def is_valid_esg_object(d):
+    """
+    Minimal ESG validation.
+    """
+    return (
+        isinstance(d, dict)
+        and "sentence" in d
+        and "aspect" in d
+    )
+
+
+def parse_esg_json(text):
+    """
+    End-to-end robust ESG JSON parser.
+    """
+    raw = extract_json_block(text)
+    normalized = normalize_json(raw)
+    validated = [x for x in normalized if is_valid_esg_object(x)]
+    return validated
+
+
 # -------------------------------------------------------
-# Parse JSON annotations
+# Parse JSON annotations (UPDATED)
 # -------------------------------------------------------
+@st.cache_data
 def parse_annotations(df):
     df = df.copy()
-
-    def safe_load(x):
-        try:
-            return json.loads(x)
-        except:
-            return []
-
-    df["parsed"] = df["text"].apply(safe_load)
+    df["parsed"] = df["text"].apply(parse_esg_json)
 
     exploded = df.explode("parsed", ignore_index=True)
     parsed_df = pd.json_normalize(exploded["parsed"])
@@ -51,7 +108,10 @@ def parse_annotations(df):
     full = pd.concat([meta, parsed_df], axis=1)
     return full
 
+
 df = parse_annotations(raw_df)
+
+st.success(f"Parsed **{len(df)}** ESG sentence records")
 
 # -------------------------------------------------------
 # Helper: Parse provider
@@ -64,13 +124,13 @@ def parse_provider(m):
 df["provider"] = df["model"].apply(parse_provider)
 
 # -------------------------------------------------------
-# Helper: Ensure pivot contains ALL models (0 if missing)
+# Helper: Ensure pivot contains ALL models
 # -------------------------------------------------------
 def ensure_all_models(reference_df, pivot):
     all_models = sorted(reference_df["model"].dropna().unique())
     for m in all_models:
         if m not in pivot.columns:
-            pivot[m] = 0
+            pivot[m] = None
     return pivot[all_models]
 
 # -------------------------------------------------------
@@ -122,7 +182,6 @@ if "confidence" in df.columns:
 else:
     conf_range = None
 
-# Apply filters
 filtered = df.copy()
 
 def apply_filter(col, values):
@@ -186,66 +245,40 @@ with tab3:
     wanted = [
         "sentence","aspect","aspect_category","sentiment","sentiment_score",
         "tone","materiality","stakeholder","impact_level","time_horizon",
-        "filename","page_number"
+        "filename","page_number","model"
     ]
     show_cols = [c for c in wanted if c in filtered.columns]
     st.dataframe(filtered[show_cols], use_container_width=True)
 
 # -------------------------------------------------------
-# TAB 4 — Model Comparison (All Models)
+# TAB 4 — Model Comparison
 # -------------------------------------------------------
 with tab4:
-    st.subheader("LLM Model Comparison for Same File & Page")
+    st.subheader("LLM Model Comparison")
 
     filenames = sorted(filtered["filename"].unique())
-    selected_file = st.selectbox("Select Report Filename", filenames, key="file_tab4")
+    selected_file = st.selectbox("Filename", filenames)
 
     pages = sorted(filtered[filtered["filename"] == selected_file]["page_number"].unique())
-    selected_page = st.selectbox("Select Page Number", pages, key="page_tab4")
+    selected_page = st.selectbox("Page", pages)
 
     subset = filtered[
         (filtered["filename"] == selected_file) &
         (filtered["page_number"] == selected_page)
     ]
 
-    # ----- COMPLETENESS SCORE -----
-    df_pdf = filtered[filtered["filename"] == selected_file]
-    comp = model_completeness(df_pdf, subset)
-
+    comp = model_completeness(filtered[filtered["filename"] == selected_file], subset)
     st.metric("Model Completeness", f"{comp['score']*100:.1f}%")
-    st.caption(f"{comp['present_count']} of {comp['total']} models appear on this page.")
 
-    if comp["score"] < 0.7:
-        st.warning(
-            f"⚠️ Only {comp['present_count']} of {comp['total']} expected models "
-            f"produced annotations.\nMissing models: {', '.join(comp['missing'])}"
-        )
-
-    st.markdown(f"### Comparing `{selected_file}` — Page **{selected_page}**")
-
-    # ----- SENTENCE COMPARISON -----
-    comparison = subset.pivot_table(
+    pivot = subset.pivot_table(
         index="sentence",
         columns="model",
         values="sentiment",
-        aggfunc=lambda x: x.iloc[0] if len(x) else None,
-        dropna=False
+        aggfunc="first"
     )
-    comparison = ensure_all_models(df_pdf, comparison)
-    st.subheader("🔍 Sentence-Level Comparison")
-    st.dataframe(comparison, use_container_width=True)
 
-    # ----- ASPECT COMPARISON -----
-    aspect = subset.pivot_table(
-        index="sentence",
-        columns="model",
-        values="aspect",
-        aggfunc=lambda x: x.iloc[0] if len(x) else None,
-        dropna=False
-    )
-    aspect = ensure_all_models(df_pdf, aspect)
-    st.subheader("📌 Aspect Differences")
-    st.dataframe(aspect, use_container_width=True)
+    pivot = ensure_all_models(filtered[filtered["filename"] == selected_file], pivot)
+    st.dataframe(pivot, use_container_width=True)
 
 # -------------------------------------------------------
 # TAB 5 — Breakdown by Provider
@@ -354,68 +387,458 @@ with tab6:
     pivot = ensure_all_models(df[df["filename"] == selected_file_cov], pivot)
     st.dataframe(pivot.style.background_gradient(cmap="Blues"), use_container_width=True)
 
-
+# -------------------------------------------------------
+# TAB 7 — Raw JSON View (FIXED)
+# -------------------------------------------------------
 with tab7:
     st.subheader("📦 Raw JSON Data Viewer")
 
-    # Step 1: Select file + page
-    filenames = sorted(df["filename"].dropna().unique())
-    selected_file_raw = st.selectbox(
-        "Select Report Filename",
-        filenames,
-        key="raw_file_tab"
-    )
+    filenames = sorted(raw_df["filename"].unique())
+    selected_file = st.selectbox("Filename", filenames, key="raw_file")
 
-    pages = sorted(df[df["filename"] == selected_file_raw]["page_number"].dropna().unique())
-    selected_page_raw = st.selectbox(
-        "Select Page Number",
-        pages,
-        key="raw_page_tab"
-    )
+    pages = sorted(raw_df[raw_df["filename"] == selected_file]["page_number"].unique())
+    selected_page = st.selectbox("Page", pages, key="raw_page")
 
-    # Subset relevant rows
-    raw_subset = raw_df[
-        (raw_df["filename"] == selected_file_raw) &
-        (raw_df["page_number"] == selected_page_raw)
+    subset = raw_df[
+        (raw_df["filename"] == selected_file) &
+        (raw_df["page_number"] == selected_page)
     ]
 
-    st.markdown(
-        f"### Raw JSON Entries for `{selected_file_raw}` — Page **{selected_page_raw}**"
-    )
+    for _, row in subset.iterrows():
+        st.markdown(f"## 🤖 Model: **{row['model']}**")
 
-    if raw_subset.empty:
-        st.warning("⚠️ No raw JSON data found for the selected page.")
-        st.stop()
+        with st.expander("📄 Raw Text"):
+            st.code(row["text"], language="json")
 
-    st.info(f"Found **{len(raw_subset)}** JSON entries on this page.")
+        parsed = parse_esg_json(row["text"])
+        st.caption(f"Parsed {len(parsed)} ESG objects")
 
-    # Iterate through each row (each model output)
-    for idx, row in raw_subset.iterrows():
-        model_name = row.get("model", "unknown-model")
-        raw_json_text = row.get("text", "[]")
+        with st.expander("✅ Parsed JSON"):
+            st.json(parsed)
 
-        st.markdown(f"## 🤖 Model: **{model_name}**")
+        if parsed:
+            with st.expander("📊 Normalized Table"):
+                st.dataframe(pd.json_normalize(parsed), use_container_width=True)
 
-        # Collapsible raw JSON
-        with st.expander("🔎 Show Raw JSON String (text field)"):
-            st.code(raw_json_text, language="json")
 
-        # Try parsing JSON
-        try:
-            parsed_json = json.loads(raw_json_text)
-        except Exception as e:
-            st.error(f"❌ JSON parsing error: {e}")
-            continue
+# import streamlit as st
+# import pandas as pd
+# import json
+# import os
 
-        # Parsed JSON viewer
-        with st.expander("📄 Parsed JSON Objects"):
-            st.json(parsed_json)
+# # -------------------------------------------------------
+# # Page Config
+# # -------------------------------------------------------
+# st.set_page_config(page_title="Parsed ESG JSON Dashboard", layout="wide")
+# st.title("📊 ESG Parsed Sentence-Level Dashboard")
 
-        # Normalized into DataFrame
-        parsed_df = pd.json_normalize(parsed_json)
+# # -------------------------------------------------------
+# # Load CSV
+# # -------------------------------------------------------
+# DATA_PATH = os.path.abspath(
+#     os.path.join(os.path.dirname(__file__), "..", "..", "data", "data_output.csv")
+# )
 
-        with st.expander("📊 Normalized Table View"):
-            st.dataframe(parsed_df, use_container_width=True)
+# st.caption(f"Using data: `{DATA_PATH}`")
+
+# @st.cache_data
+# def load_data(path):
+#     return pd.read_csv(path)
+
+# try:
+#     raw_df = load_data(DATA_PATH)
+# except Exception as e:
+#     st.error(f"❌ Failed to load CSV at: {DATA_PATH}\n\n{e}")
+#     st.stop()
+
+# # -------------------------------------------------------
+# # Parse JSON annotations
+# # -------------------------------------------------------
+# def parse_annotations(df):
+#     df = df.copy()
+
+#     def safe_load(x):
+#         try:
+#             return json.loads(x)
+#         except:
+#             return []
+
+#     df["parsed"] = df["text"].apply(safe_load)
+
+#     exploded = df.explode("parsed", ignore_index=True)
+#     parsed_df = pd.json_normalize(exploded["parsed"])
+
+#     meta_cols = [c for c in df.columns if c != "parsed"]
+#     meta = exploded[meta_cols].reset_index(drop=True)
+
+#     full = pd.concat([meta, parsed_df], axis=1)
+#     return full
+
+# df = parse_annotations(raw_df)
+
+# # -------------------------------------------------------
+# # Helper: Parse provider
+# # -------------------------------------------------------
+# def parse_provider(m):
+#     if isinstance(m, str) and "/" in m:
+#         return m.split("/")[0]
+#     return "unknown"
+
+# df["provider"] = df["model"].apply(parse_provider)
+
+# # -------------------------------------------------------
+# # Helper: Ensure pivot contains ALL models (0 if missing)
+# # -------------------------------------------------------
+# def ensure_all_models(reference_df, pivot):
+#     all_models = sorted(reference_df["model"].dropna().unique())
+#     for m in all_models:
+#         if m not in pivot.columns:
+#             pivot[m] = 0
+#     return pivot[all_models]
+
+# # -------------------------------------------------------
+# # Helper: completeness scoring
+# # -------------------------------------------------------
+# def model_completeness(df_pdf, df_page):
+#     expected = sorted(df_pdf["model"].dropna().unique())
+#     present = sorted(df_page["model"].dropna().unique())
+#     missing = set(expected) - set(present)
+
+#     score = len(present) / len(expected) if expected else 1.0
+
+#     return {
+#         "expected": expected,
+#         "present": present,
+#         "missing": sorted(missing),
+#         "missing_count": len(missing),
+#         "present_count": len(present),
+#         "total": len(expected),
+#         "score": score
+#     }
+
+# # -------------------------------------------------------
+# # Sidebar Filters
+# # -------------------------------------------------------
+# st.sidebar.header("🔍 Filters")
+
+# def make_multiselect(label, col):
+#     if col not in df.columns:
+#         return None
+#     vals = sorted(df[col].dropna().unique())
+#     return st.sidebar.multiselect(label, vals, default=vals)
+
+# aspect_cats = make_multiselect("Aspect Category", "aspect_category")
+# sentiments = make_multiselect("Sentiment", "sentiment")
+# tones = make_multiselect("Tone", "tone")
+# materialities = make_multiselect("Materiality", "materiality")
+# stakeholders = make_multiselect("Stakeholder", "stakeholder")
+# value_chain_stage = make_multiselect("Value Chain Stage", "value_chain_stage")
+# time_horizon = make_multiselect("Time Horizon", "time_horizon")
+
+# if "confidence" in df.columns:
+#     conf_range = st.sidebar.slider(
+#         "Confidence Range",
+#         0.0, 1.0,
+#         (float(df["confidence"].min()), float(df["confidence"].max())),
+#         0.01,
+#     )
+# else:
+#     conf_range = None
+
+# # Apply filters
+# filtered = df.copy()
+
+# def apply_filter(col, values):
+#     global filtered
+#     if values and col in filtered.columns:
+#         filtered = filtered[filtered[col].isin(values)]
+
+# apply_filter("aspect_category", aspect_cats)
+# apply_filter("sentiment", sentiments)
+# apply_filter("tone", tones)
+# apply_filter("materiality", materialities)
+# apply_filter("stakeholder", stakeholders)
+# apply_filter("value_chain_stage", value_chain_stage)
+# apply_filter("time_horizon", time_horizon)
+
+# if conf_range:
+#     lo, hi = conf_range
+#     filtered = filtered[(filtered["confidence"] >= lo) & (filtered["confidence"] <= hi)]
+
+# st.caption(f"Showing **{len(filtered)}** sentences after filtering.")
+
+# # -------------------------------------------------------
+# # Tabs
+# # -------------------------------------------------------
+# tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+#     "📊 Distributions",
+#     "📌 Aspects",
+#     "📄 Sentence Table",
+#     "🤖 LLM Model Comparison",
+#     "LLM Breakdown",
+#     "🧮 Model Coverage",
+#     "📦 Raw JSON View"
+# ])
+
+# # -------------------------------------------------------
+# # TAB 1 — Distributions
+# # -------------------------------------------------------
+# with tab1:
+#     st.subheader("Sentiment Distribution")
+#     st.bar_chart(filtered["sentiment"].value_counts())
+
+#     st.subheader("Aspect Category Distribution")
+#     st.bar_chart(filtered["aspect_category"].value_counts())
+
+# # -------------------------------------------------------
+# # TAB 2 — Aspects
+# # -------------------------------------------------------
+# with tab2:
+#     st.subheader("Top Aspects")
+#     if "aspect" in filtered:
+#         n = st.slider("Show Top N", 3, 30, 10)
+#         topA = filtered["aspect"].value_counts().head(n)
+#         st.bar_chart(topA)
+#         st.dataframe(topA.rename("count"))
+
+# # -------------------------------------------------------
+# # TAB 3 — Sentence Table
+# # -------------------------------------------------------
+# with tab3:
+#     st.subheader("Full Sentence Table")
+#     wanted = [
+#         "sentence","aspect","aspect_category","sentiment","sentiment_score",
+#         "tone","materiality","stakeholder","impact_level","time_horizon",
+#         "filename","page_number"
+#     ]
+#     show_cols = [c for c in wanted if c in filtered.columns]
+#     st.dataframe(filtered[show_cols], use_container_width=True)
+
+# # -------------------------------------------------------
+# # TAB 4 — Model Comparison (All Models)
+# # -------------------------------------------------------
+# with tab4:
+#     st.subheader("LLM Model Comparison for Same File & Page")
+
+#     filenames = sorted(filtered["filename"].unique())
+#     selected_file = st.selectbox("Select Report Filename", filenames, key="file_tab4")
+
+#     pages = sorted(filtered[filtered["filename"] == selected_file]["page_number"].unique())
+#     selected_page = st.selectbox("Select Page Number", pages, key="page_tab4")
+
+#     subset = filtered[
+#         (filtered["filename"] == selected_file) &
+#         (filtered["page_number"] == selected_page)
+#     ]
+
+#     # ----- COMPLETENESS SCORE -----
+#     df_pdf = filtered[filtered["filename"] == selected_file]
+#     comp = model_completeness(df_pdf, subset)
+
+#     st.metric("Model Completeness", f"{comp['score']*100:.1f}%")
+#     st.caption(f"{comp['present_count']} of {comp['total']} models appear on this page.")
+
+#     if comp["score"] < 0.7:
+#         st.warning(
+#             f"⚠️ Only {comp['present_count']} of {comp['total']} expected models "
+#             f"produced annotations.\nMissing models: {', '.join(comp['missing'])}"
+#         )
+
+#     st.markdown(f"### Comparing `{selected_file}` — Page **{selected_page}**")
+
+#     # ----- SENTENCE COMPARISON -----
+#     comparison = subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="sentiment",
+#         aggfunc=lambda x: x.iloc[0] if len(x) else None,
+#         dropna=False
+#     )
+#     comparison = ensure_all_models(df_pdf, comparison)
+#     st.subheader("🔍 Sentence-Level Comparison")
+#     st.dataframe(comparison, use_container_width=True)
+
+#     # ----- ASPECT COMPARISON -----
+#     aspect = subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="aspect",
+#         aggfunc=lambda x: x.iloc[0] if len(x) else None,
+#         dropna=False
+#     )
+#     aspect = ensure_all_models(df_pdf, aspect)
+#     st.subheader("📌 Aspect Differences")
+#     st.dataframe(aspect, use_container_width=True)
+
+# # -------------------------------------------------------
+# # TAB 5 — Breakdown by Provider
+# # -------------------------------------------------------
+# with tab5:
+#     st.subheader("LLM Breakdown by Provider")
+
+#     filenames = sorted(filtered["filename"].unique())
+#     selected_file = st.selectbox("Select Report Filename", filenames, key="file_tab5")
+
+#     pages = sorted(filtered[filtered["filename"] == selected_file]["page_number"].unique())
+#     selected_page = st.selectbox("Select Page Number", pages, key="page_tab5")
+
+#     subset = filtered[
+#         (filtered["filename"] == selected_file) &
+#         (filtered["page_number"] == selected_page)
+#     ].copy()
+
+#     providers = sorted(subset["provider"].unique())
+#     selected_provider = st.selectbox("Select Provider", providers, key="provider_tab5")
+
+#     provider_subset = subset[subset["provider"] == selected_provider]
+
+#     st.write("Models under provider:", sorted(provider_subset["model"].unique()))
+
+#     # --- COMPLETENESS FOR PROVIDER ---
+#     df_pdf = filtered[filtered["filename"] == selected_file]
+#     comp = model_completeness(df_pdf[df_pdf["provider"] == selected_provider], provider_subset)
+
+#     st.metric("Provider Completeness", f"{comp['score']*100:.1f}%")
+#     if comp["missing_count"] > 0:
+#         st.warning(
+#             f"Missing {comp['missing_count']} provider models: {', '.join(comp['missing'])}"
+#         )
+
+#     # Cleaned Markdown
+#     st.subheader("📖 Cleaned Markdown")
+#     if "cleaned_markdown" in subset.columns:
+#         st.markdown(subset["cleaned_markdown"].dropna().iloc[0])
+
+#     # Sentence comparison
+#     pivot_sent = provider_subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="sentiment",
+#         aggfunc=lambda x: x.iloc[0] if len(x) else None
+#     )
+#     pivot_sent = ensure_all_models(df_pdf[df_pdf["provider"] == selected_provider], pivot_sent)
+#     st.dataframe(pivot_sent, use_container_width=True)
+
+# # -------------------------------------------------------
+# # TAB 6 — Model Coverage
+# # -------------------------------------------------------
+# with tab6:
+#     st.subheader("📦 Model Coverage Across PDFs and Pages")
+
+#     models_per_pdf = (
+#         df.groupby("filename")["model"].nunique()
+#         .rename("unique_model_count")
+#         .sort_values(ascending=False)
+#     )
+#     st.dataframe(models_per_pdf)
+
+#     models_per_page = (
+#         df.groupby(["filename", "page_number"])["model"]
+#         .nunique()
+#         .reset_index()
+#         .rename(columns={"model": "unique_model_count"})
+#     )
+#     st.dataframe(models_per_page)
+
+#     selected_file_cov = st.selectbox(
+#         "Select Report Filename",
+#         sorted(df["filename"].unique()),
+#         key="cov_file"
+#     )
+
+#     st.subheader("📄 Pages for this File")
+#     subset = models_per_page[
+#         models_per_page["filename"] == selected_file_cov
+#     ].sort_values("page_number")
+#     st.dataframe(subset)
+
+#     st.subheader("🧠 Models Used on Each Page")
+#     model_page_map = (
+#         df[df["filename"] == selected_file_cov]
+#         .groupby("page_number")["model"]
+#         .unique()
+#         .reset_index()
+#     )
+#     model_page_map["models"] = model_page_map["model"].apply(lambda x: ", ".join(sorted(x)))
+#     model_page_map = model_page_map.drop(columns=["model"])
+#     st.dataframe(model_page_map)
+
+#     st.subheader("🔥 Model–Page Heatmap")
+#     pivot = (
+#         df[df["filename"] == selected_file_cov]
+#         .pivot_table(
+#             index="page_number",
+#             columns="model",
+#             values="sentence",
+#             aggfunc="count",
+#             fill_value=0
+#         )
+#     )
+#     pivot = ensure_all_models(df[df["filename"] == selected_file_cov], pivot)
+#     st.dataframe(pivot.style.background_gradient(cmap="Blues"), use_container_width=True)
+
+
+# with tab7:
+#     st.subheader("📦 Raw JSON Data Viewer")
+
+#     # Step 1: Select file + page
+#     filenames = sorted(df["filename"].dropna().unique())
+#     selected_file_raw = st.selectbox(
+#         "Select Report Filename",
+#         filenames,
+#         key="raw_file_tab"
+#     )
+
+#     pages = sorted(df[df["filename"] == selected_file_raw]["page_number"].dropna().unique())
+#     selected_page_raw = st.selectbox(
+#         "Select Page Number",
+#         pages,
+#         key="raw_page_tab"
+#     )
+
+#     # Subset relevant rows
+#     raw_subset = raw_df[
+#         (raw_df["filename"] == selected_file_raw) &
+#         (raw_df["page_number"] == selected_page_raw)
+#     ]
+
+#     st.markdown(
+#         f"### Raw JSON Entries for `{selected_file_raw}` — Page **{selected_page_raw}**"
+#     )
+
+#     if raw_subset.empty:
+#         st.warning("⚠️ No raw JSON data found for the selected page.")
+#         st.stop()
+
+#     st.info(f"Found **{len(raw_subset)}** JSON entries on this page.")
+
+#     # Iterate through each row (each model output)
+#     for idx, row in raw_subset.iterrows():
+#         model_name = row.get("model", "unknown-model")
+#         raw_json_text = row.get("text", "[]")
+
+#         st.markdown(f"## 🤖 Model: **{model_name}**")
+
+#         # Collapsible raw JSON
+#         with st.expander("🔎 Show Raw JSON String (text field)"):
+#             st.code(raw_json_text, language="json")
+
+#         # Try parsing JSON
+#         try:
+#             parsed_json = json.loads(raw_json_text)
+#         except Exception as e:
+#             st.error(f"❌ JSON parsing error: {e}")
+#             continue
+
+#         # Parsed JSON viewer
+#         with st.expander("📄 Parsed JSON Objects"):
+#             st.json(parsed_json)
+
+#         # Normalized into DataFrame
+#         parsed_df = pd.json_normalize(parsed_json)
+
+#         with st.expander("📊 Normalized Table View"):
+#             st.dataframe(parsed_df, use_container_width=True)
 
 
 # import streamlit as st
