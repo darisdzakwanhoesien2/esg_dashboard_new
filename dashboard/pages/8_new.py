@@ -251,24 +251,76 @@ with tab3:
     st.dataframe(filtered[show_cols], use_container_width=True)
 
 # -------------------------------------------------------
-# TAB 4 — Model Comparison
+# TAB 4 — Model Comparison (WITH MARKDOWN VISUALIZATION)
 # -------------------------------------------------------
 with tab4:
-    st.subheader("LLM Model Comparison")
+    st.subheader("🤖 LLM Model Comparison (Page-Level)")
 
+    # ---------------------------------------------------
+    # File & Page Selection
+    # ---------------------------------------------------
     filenames = sorted(filtered["filename"].unique())
-    selected_file = st.selectbox("Filename", filenames)
+    selected_file = st.selectbox("Filename", filenames, key="mc_file")
 
-    pages = sorted(filtered[filtered["filename"] == selected_file]["page_number"].unique())
-    selected_page = st.selectbox("Page", pages)
+    pages = sorted(
+        filtered[filtered["filename"] == selected_file]["page_number"].unique()
+    )
+    selected_page = st.selectbox("Page Number", pages, key="mc_page")
 
     subset = filtered[
         (filtered["filename"] == selected_file) &
         (filtered["page_number"] == selected_page)
     ]
 
-    comp = model_completeness(filtered[filtered["filename"] == selected_file], subset)
-    st.metric("Model Completeness", f"{comp['score']*100:.1f}%")
+    if subset.empty:
+        st.warning("No data for this file & page.")
+        st.stop()
+
+    # ---------------------------------------------------
+    # Model Completeness
+    # ---------------------------------------------------
+    df_pdf = filtered[filtered["filename"] == selected_file]
+    comp = model_completeness(df_pdf, subset)
+
+    st.metric(
+        "Model Completeness",
+        f"{comp['score']*100:.1f}%",
+        help=f"Present: {comp['present_count']} / {comp['total']}"
+    )
+
+    if comp["missing_count"] > 0:
+        st.warning(
+            f"Missing models: {', '.join(comp['missing'])}"
+        )
+
+    # ---------------------------------------------------
+    # MARKDOWN CONTEXT (SOURCE OF TRUTH)
+    # ---------------------------------------------------
+    st.markdown("## 📄 Source Text (Same for All Models)")
+
+    # Take FIRST row — guaranteed same per file+page
+    row0 = subset.iloc[0]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 🧾 markdown_full")
+        if "markdown_full" in row0 and pd.notna(row0["markdown_full"]):
+            st.markdown(row0["markdown_full"])
+        else:
+            st.info("No markdown_full available.")
+
+    with col2:
+        st.markdown("### ✂️ cleaned_markdown")
+        if "cleaned_markdown" in row0 and pd.notna(row0["cleaned_markdown"]):
+            st.markdown(row0["cleaned_markdown"])
+        else:
+            st.info("No cleaned_markdown available.")
+
+    # ---------------------------------------------------
+    # Sentence-Level Model Comparison
+    # ---------------------------------------------------
+    st.markdown("## 🔍 Sentence-Level Comparison Across Models")
 
     pivot = subset.pivot_table(
         index="sentence",
@@ -277,8 +329,170 @@ with tab4:
         aggfunc="first"
     )
 
-    pivot = ensure_all_models(filtered[filtered["filename"] == selected_file], pivot)
+    pivot = ensure_all_models(df_pdf, pivot)
     st.dataframe(pivot, use_container_width=True)
+
+    # ---------------------------------------------------
+    # Sentence Existence Check (PER SENTENCE)
+    # ---------------------------------------------------
+    st.markdown("## ✅ Sentence Presence Check (Against Source Text)")
+
+    markdown_full = str(row0.get("markdown_full", "") or "")
+    cleaned_markdown = str(row0.get("cleaned_markdown", "") or "")
+    raw_text = str(row0.get("text", "") or "")
+
+    def sentence_presence(sentence):
+        return {
+            "in_text": sentence in raw_text,
+            "in_markdown_full": sentence in markdown_full,
+            "in_cleaned_markdown": sentence in cleaned_markdown
+        }
+
+    presence_rows = []
+    for sent in pivot.index:
+        presence = sentence_presence(sent)
+        presence_rows.append({
+            "sentence": sent,
+            "in_text": presence["in_text"],
+            "in_markdown_full": presence["in_markdown_full"],
+            "in_cleaned_markdown": presence["in_cleaned_markdown"],
+            "found_anywhere": any(presence.values())
+        })
+
+    presence_df = pd.DataFrame(presence_rows)
+
+    st.dataframe(
+        presence_df,
+        use_container_width=True
+    )
+
+    # ---------------------------------------------------
+    # Highlight Missing Sentences
+    # ---------------------------------------------------
+    missing = presence_df[~presence_df["found_anywhere"]]
+
+    if not missing.empty:
+        st.warning(
+            f"⚠️ {len(missing)} sentences are NOT found in markdown_full / cleaned_markdown / raw text."
+        )
+        st.dataframe(
+            missing[["sentence"]],
+            use_container_width=True
+        )
+    else:
+        st.success("✅ All extracted sentences exist in the source text.")
+
+
+# # -------------------------------------------------------
+# # TAB 4 — Model Comparison (Improved)
+# # -------------------------------------------------------
+# with tab4:
+#     st.subheader("LLM Model Comparison")
+
+#     filenames = sorted(filtered["filename"].unique())
+#     selected_file = st.selectbox("Filename", filenames)
+
+#     pages = sorted(filtered[filtered["filename"] == selected_file]["page_number"].unique())
+#     selected_page = st.selectbox("Page", pages)
+
+#     subset = filtered[
+#         (filtered["filename"] == selected_file) &
+#         (filtered["page_number"] == selected_page)
+#     ]
+
+#     # Model completeness
+#     comp = model_completeness(filtered[filtered["filename"] == selected_file], subset)
+#     st.metric("Model Completeness", f"{comp['score']*100:.1f}%")
+
+#     # Create pivot table for sentence comparison
+#     pivot = subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="sentiment",
+#         aggfunc="first"
+#     )
+
+#     # Ensure all models are present
+#     pivot = ensure_all_models(filtered[filtered["filename"] == selected_file], pivot)
+
+#     # Display sentence-level comparison
+#     st.subheader("🔍 Sentence-Level Comparison")
+#     st.dataframe(pivot, use_container_width=True)
+
+#     # Combine sentences into a single string to check for existence in text/markdown
+#     combined_sentences = pivot.index.tolist()
+
+#     # Check if combined sentences exist in 'text', 'markdown_full', or 'cleaned_markdown'
+#     def check_sentence_existence(sentence, row):
+#         """
+#         Check if the combined sentence exists in the provided columns.
+#         """
+#         text = row['text']
+#         markdown_full = row.get('markdown_full', '')
+#         cleaned_markdown = row.get('cleaned_markdown', '')
+
+#         # Combine the sentences to check if they exist in any of the relevant columns
+#         combined_text = ' '.join(combined_sentences)
+
+#         if any([
+#             combined_text in text,
+#             combined_text in markdown_full,
+#             combined_text in cleaned_markdown
+#         ]):
+#             return True
+#         return False
+
+#     # Check for each sentence's existence in the columns
+#     sentence_existence_results = []
+#     for sentence in combined_sentences:
+#         sentence_found = False
+#         for idx, row in subset.iterrows():
+#             if check_sentence_existence(sentence, row):
+#                 sentence_found = True
+#                 break
+#         sentence_existence_results.append((sentence, sentence_found))
+
+#     # Display results of sentence comparison with existence check
+#     st.subheader("📄 Sentence Existence Check")
+#     existence_df = pd.DataFrame(sentence_existence_results, columns=["Sentence", "Exists in Data (text/markdown)"])
+#     st.dataframe(existence_df)
+
+#     # Show warnings for missing sentences
+#     missing_sentences = existence_df[existence_df["Exists in Data (text/markdown)"] == False]
+#     if not missing_sentences.empty:
+#         st.warning(f"⚠️ {len(missing_sentences)} sentences are **missing** in the data (text or markdown columns).")
+#         st.dataframe(missing_sentences)
+
+
+# # -------------------------------------------------------
+# # TAB 4 — Model Comparison
+# # -------------------------------------------------------
+# with tab4:
+#     st.subheader("LLM Model Comparison")
+
+#     filenames = sorted(filtered["filename"].unique())
+#     selected_file = st.selectbox("Filename", filenames)
+
+#     pages = sorted(filtered[filtered["filename"] == selected_file]["page_number"].unique())
+#     selected_page = st.selectbox("Page", pages)
+
+#     subset = filtered[
+#         (filtered["filename"] == selected_file) &
+#         (filtered["page_number"] == selected_page)
+#     ]
+
+#     comp = model_completeness(filtered[filtered["filename"] == selected_file], subset)
+#     st.metric("Model Completeness", f"{comp['score']*100:.1f}%")
+
+#     pivot = subset.pivot_table(
+#         index="sentence",
+#         columns="model",
+#         values="sentiment",
+#         aggfunc="first"
+#     )
+
+#     pivot = ensure_all_models(filtered[filtered["filename"] == selected_file], pivot)
+#     st.dataframe(pivot, use_container_width=True)
 
 # -------------------------------------------------------
 # TAB 5 — Breakdown by Provider
