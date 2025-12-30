@@ -202,13 +202,63 @@ with tab1:
 # -------------------------------------------------------
 # TAB 2 — Aspects
 # -------------------------------------------------------
+# -------------------------------------------------------
+# TAB 2 — Aspects (SORTED DESCENDING)
+# -------------------------------------------------------
 with tab2:
     st.subheader("Top Aspects")
-    if "aspect" in filtered:
+
+    if "aspect" in filtered.columns:
         n = st.slider("Show Top N", 3, 30, 10)
-        topA = filtered["aspect"].value_counts().head(n)
-        st.bar_chart(topA)
-        st.dataframe(topA.rename("count"))
+
+        topA = (
+            filtered["aspect"]
+            .value_counts()
+            .sort_values(ascending=False)
+            .head(n)
+        )
+
+        topA_df = topA.reset_index()
+        topA_df.columns = ["aspect", "count"]
+
+        # 🔐 FORCE ORDER
+        topA_df["aspect"] = pd.Categorical(
+            topA_df["aspect"],
+            categories=topA_df["aspect"].tolist(),
+            ordered=True
+        )
+
+        st.bar_chart(
+            topA_df.set_index("aspect")["count"]
+        )
+
+        st.dataframe(topA_df, use_container_width=True)
+
+# with tab2:
+#     st.subheader("Top Aspects")
+
+#     if "aspect" in filtered.columns:
+#         n = st.slider("Show Top N", 3, 30, 10)
+
+#         topA = (
+#             filtered["aspect"]
+#             .value_counts()
+#             .sort_values(ascending=False)
+#             .head(n)
+#         )
+
+#         # Convert to DataFrame to preserve order
+#         topA_df = topA.reset_index()
+#         topA_df.columns = ["aspect", "count"]
+
+#         # Plot (order preserved)
+#         st.bar_chart(
+#             topA_df.set_index("aspect")["count"]
+#         )
+
+#         # Table (also ordered)
+#         st.dataframe(topA_df, use_container_width=True)
+
 
 # -------------------------------------------------------
 # TAB 3 — Sentence Table
