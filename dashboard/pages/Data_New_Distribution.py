@@ -1,11 +1,13 @@
 # ==============================================================
-# 🪢 Sankey + Waterfall + Multi-Rule ESG Explorer (STABLE)
+# 🪢 Sankey + Waterfall + Multi-Rule ESG Explorer (ONTOLOGY-AWARE)
 # ==============================================================
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import json
 import os
 import sys
+from pathlib import Path
 
 # --------------------------------------------------------------
 # PAGE CONFIG
@@ -14,14 +16,17 @@ st.set_page_config(page_title="ESG Sankey & Filters", layout="wide")
 st.header("🔎 ESG Sankey · Waterfall · Multi-Rule Explorer")
 
 # --------------------------------------------------------------
-# PATHS & DATA LOADING
+# PATHS
 # --------------------------------------------------------------
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
-sys.path.append(PROJECT_ROOT)
+CURRENT_DIR = Path(__file__).resolve()
+PROJECT_ROOT = CURRENT_DIR.parents[2]
 
-DATA_PATH = os.path.join(PROJECT_ROOT, "data", "output_in_csv.csv")
+DATA_PATH = PROJECT_ROOT / "data" / "output_in_csv.csv"
+ONTOLOGY_DIR = PROJECT_ROOT / "dashboard" / "data"
 
+# --------------------------------------------------------------
+# LOAD DATA
+# --------------------------------------------------------------
 @st.cache_data
 def load_dataset():
     df = pd.read_csv(DATA_PATH)
@@ -40,21 +45,48 @@ if missing:
     st.stop()
 
 # --------------------------------------------------------------
-# NORMALIZATION (SAFE, MINIMAL)
+# LOAD ONTOLOGIES
 # --------------------------------------------------------------
-def norm(x):
-    if pd.isna(x):
-        return "OTHER"
-    return str(x).strip().upper()
+def load_ontology(name):
+    with open(ONTOLOGY_DIR / name) as f:
+        return json.load(f)
 
-df["aspect_n"] = df["aspect_category"].apply(norm)
-df["sentiment_n"] = df["sentiment"].apply(norm)
-df["tone_n"] = df["tone"].apply(norm)
+ASPECT_ONTOLOGY = load_ontology("aspect_category_ontology.json")
+SENTIMENT_ONTOLOGY = load_ontology("sentiment_ontology.json")
+TONE_ONTOLOGY = load_ontology("tone_ontology.json")
+
+# --------------------------------------------------------------
+# BUILD ALIAS MAPS
+# --------------------------------------------------------------
+def build_alias_map(ontology):
+    m = {}
+    for canonical, meta in ontology.items():
+        for alias in meta.get("aliases", []):
+            if alias is None:
+                continue
+            m[str(alias).strip().lower()] = canonical
+    return m
+
+ASPECT_MAP = build_alias_map(ASPECT_ONTOLOGY)
+SENTIMENT_MAP = build_alias_map(SENTIMENT_ONTOLOGY)
+TONE_MAP = build_alias_map(TONE_ONTOLOGY)
+
+def normalize(val, mapping):
+    if pd.isna(val):
+        return "OTHER"
+    return mapping.get(str(val).strip().lower(), "OTHER")
+
+# --------------------------------------------------------------
+# APPLY ONTOLOGY NORMALIZATION
+# --------------------------------------------------------------
+df["aspect_n"] = df["aspect_category"].apply(lambda x: normalize(x, ASPECT_MAP))
+df["sentiment_n"] = df["sentiment"].apply(lambda x: normalize(x, SENTIMENT_MAP))
+df["tone_n"] = df["tone"].apply(lambda x: normalize(x, TONE_MAP))
 
 # ==============================================================
 # 🪢 GLOBAL SANKEY (SORTED + NAMESPACED)
 # ==============================================================
-st.markdown("## 🪢 Sankey: Aspect → Sentiment → Tone (Sorted by Frequency)")
+st.markdown("## 🪢 Sankey: Aspect → Sentiment → Tone (Ontology Normalized)")
 
 flow = (
     df.groupby(["aspect_n", "sentiment_n", "tone_n"])
@@ -71,7 +103,7 @@ S = [f"S:{s}" for s in sentiment_order]
 T = [f"T:{t}" for t in tone_order]
 
 nodes = A + S + T
-node_index = {n: i for i, n in enumerate(nodes)}
+idx = {n: i for i, n in enumerate(nodes)}
 
 links = {"source": [], "target": [], "value": []}
 
@@ -79,15 +111,14 @@ for _, r in flow.iterrows():
     a, s, t, c = r["aspect_n"], r["sentiment_n"], r["tone_n"], r["count"]
     if c <= 0:
         continue
-
-    links["source"].extend([node_index[f"A:{a}"], node_index[f"S:{s}"]])
-    links["target"].extend([node_index[f"S:{s}"], node_index[f"T:{t}"]])
-    links["value"].extend([c, c])
+    links["source"] += [idx[f"A:{a}"], idx[f"S:{s}"]]
+    links["target"] += [idx[f"S:{s}"], idx[f"T:{t}"]]
+    links["value"] += [c, c]
 
 labels = (
-    [x.replace("A:", "Aspect: ") for x in A] +
-    [x.replace("S:", "Sentiment: ") for x in S] +
-    [x.replace("T:", "Tone: ") for x in T]
+    [f"Aspect: {ASPECT_ONTOLOGY.get(a, {}).get('label', a)}" for a in aspect_order] +
+    [f"Sentiment: {SENTIMENT_ONTOLOGY.get(s, {}).get('label', s)}" for s in sentiment_order] +
+    [f"Tone: {TONE_ONTOLOGY.get(t, {}).get('label', t)}" for t in tone_order]
 )
 
 fig = go.Figure(data=[go.Sankey(
@@ -99,51 +130,45 @@ fig = go.Figure(data=[go.Sankey(
 st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================
-# 📋 DETECTED CATEGORY TABLES (SAFE)
+# 📋 POST-SANKEY CATEGORY INSPECTION
 # ==============================================================
 st.markdown("---")
-st.subheader("📋 Detected Categories (Post-Sankey Inspection)")
+st.subheader("📋 Detected Categories (Ontology vs Data)")
 
-def category_table(df, col, title):
+def category_table(df, col, title, ontology):
     summary = (
         df[col]
-        .astype(str)
-        .value_counts(dropna=False)
+        .value_counts()
         .reset_index()
     )
     summary.columns = [col, "count"]
-
-    # 🔒 FORCE NUMERIC
-    summary["count"] = pd.to_numeric(summary["count"], errors="coerce").fillna(0)
-
     total = summary["count"].sum()
-    if total == 0:
-        st.info("No data available.")
-        return
 
     summary["percentage"] = (summary["count"] / total * 100).round(2)
-    summary = summary.sort_values("count", ascending=False)
+    summary["label"] = summary[col].apply(
+        lambda x: ontology.get(x, {}).get("label", "❓ Not in ontology")
+    )
 
     st.markdown(f"### {title}")
     st.dataframe(summary, use_container_width=True)
 
     flagged = summary[
-        summary[col].isin(["OTHER", "NONE", "UNKNOWN"]) |
+        (summary[col] == "OTHER") |
         (summary["percentage"] < 1.0)
     ]
 
     if not flagged.empty:
-        st.warning("⚠️ Low-frequency or fallback categories detected")
+        st.warning("⚠️ Review low-frequency or fallback categories")
         st.dataframe(flagged, use_container_width=True)
 
 with st.expander("📌 Aspect Categories", expanded=True):
-    category_table(df, "aspect_n", "Aspect Categories")
+    category_table(df, "aspect_n", "Aspect Categories", ASPECT_ONTOLOGY)
 
 with st.expander("📌 Sentiment Categories", expanded=False):
-    category_table(df, "sentiment_n", "Sentiment Categories")
+    category_table(df, "sentiment_n", "Sentiment Categories", SENTIMENT_ONTOLOGY)
 
 with st.expander("📌 Tone Categories", expanded=False):
-    category_table(df, "tone_n", "Tone Categories")
+    category_table(df, "tone_n", "Tone Categories", TONE_ONTOLOGY)
 
 # ==============================================================
 # 1️⃣ WATERFALL FILTER
@@ -151,13 +176,9 @@ with st.expander("📌 Tone Categories", expanded=False):
 st.markdown("---")
 st.subheader("1️⃣ Waterfall Filter")
 
-aspect_opts = sorted(df["aspect_n"].unique())
-sentiment_opts = sorted(df["sentiment_n"].unique())
-tone_opts = sorted(df["tone_n"].unique())
-
-a = st.selectbox("Aspect", ["(All)"] + aspect_opts)
-s = st.selectbox("Sentiment", ["(All)"] + sentiment_opts)
-t = st.selectbox("Tone", ["(All)"] + tone_opts)
+a = st.selectbox("Aspect", ["(All)"] + aspect_order)
+s = st.selectbox("Sentiment", ["(All)"] + sentiment_order)
+t = st.selectbox("Tone", ["(All)"] + tone_order)
 
 tmp = df.copy()
 if a != "(All)": tmp = tmp[tmp["aspect_n"] == a]
@@ -190,26 +211,9 @@ for i, rule in enumerate(st.session_state.rules):
     with st.expander(f"Rule #{i+1}", expanded=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
 
-        rule["aspect"] = c1.selectbox(
-            "Aspect",
-            ["(Any)"] + aspect_opts,
-            index=(["(Any)"] + aspect_opts).index(rule["aspect"]),
-            key=f"a{i}"
-        )
-
-        rule["sentiment"] = c2.selectbox(
-            "Sentiment",
-            ["(Any)"] + sentiment_opts,
-            index=(["(Any)"] + sentiment_opts).index(rule["sentiment"]),
-            key=f"s{i}"
-        )
-
-        rule["tone"] = c3.selectbox(
-            "Tone",
-            ["(Any)"] + tone_opts,
-            index=(["(Any)"] + tone_opts).index(rule["tone"]),
-            key=f"t{i}"
-        )
+        rule["aspect"] = c1.selectbox("Aspect", ["(Any)"] + aspect_order, key=f"a{i}")
+        rule["sentiment"] = c2.selectbox("Sentiment", ["(Any)"] + sentiment_order, key=f"s{i}")
+        rule["tone"] = c3.selectbox("Tone", ["(Any)"] + tone_order, key=f"t{i}")
 
         if c4.button("🗑", key=f"del{i}"):
             st.session_state.rules.pop(i)
