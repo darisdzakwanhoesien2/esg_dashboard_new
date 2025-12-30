@@ -178,7 +178,17 @@ st.caption(f"Showing **{len(filtered)}** sentences after filtering.")
 # -------------------------------------------------------
 # Tabs
 # -------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+# tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+#     "📊 Distributions",
+#     "📌 Aspects",
+#     "📄 Sentence Table",
+#     "🤖 Model Comparison",
+#     "LLM Breakdown",
+#     "🧮 Model Coverage",
+#     "📦 Raw JSON View",
+#     "📊 Grounding Audit"
+# ])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📊 Distributions",
     "📌 Aspects",
     "📄 Sentence Table",
@@ -186,8 +196,10 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "LLM Breakdown",
     "🧮 Model Coverage",
     "📦 Raw JSON View",
-    "📊 Grounding Audit"
+    "📊 Grounding Audit",
+    "🧩 Aspect Clustering"
 ])
+
 
 # -------------------------------------------------------
 # TAB 1 — Distributions
@@ -233,32 +245,6 @@ with tab2:
         )
 
         st.dataframe(topA_df, use_container_width=True)
-
-# with tab2:
-#     st.subheader("Top Aspects")
-
-#     if "aspect" in filtered.columns:
-#         n = st.slider("Show Top N", 3, 30, 10)
-
-#         topA = (
-#             filtered["aspect"]
-#             .value_counts()
-#             .sort_values(ascending=False)
-#             .head(n)
-#         )
-
-#         # Convert to DataFrame to preserve order
-#         topA_df = topA.reset_index()
-#         topA_df.columns = ["aspect", "count"]
-
-#         # Plot (order preserved)
-#         st.bar_chart(
-#             topA_df.set_index("aspect")["count"]
-#         )
-
-#         # Table (also ordered)
-#         st.dataframe(topA_df, use_container_width=True)
-
 
 # -------------------------------------------------------
 # TAB 3 — Sentence Table
@@ -613,3 +599,114 @@ with tab8:
     st.dataframe(page_subset[[
         "sentence", "aspect", "sentiment", "model"
     ]], use_container_width=True)
+
+# -------------------------------------------------------
+# TAB 9 — Grounding Audit (FIXED)
+# -------------------------------------------------------
+# -------------------------------------------------------
+# TAB 9 — Aspect Clustering (FIXED & SAFE)
+# -------------------------------------------------------
+with tab9:
+    st.subheader("🧩 Aspect Clustering & Relabeling")
+
+    # ---------------------------------------------------
+    # Safety checks
+    # ---------------------------------------------------
+    required_cols = ["aspect", "aspect_cluster"]
+
+    missing_cols = [c for c in required_cols if c not in filtered.columns]
+    if missing_cols:
+        st.error(f"Missing required columns: {missing_cols}")
+        st.stop()
+
+    if filtered.empty:
+        st.warning("No data available after filtering.")
+        st.stop()
+
+    # ---------------------------------------------------
+    # Coverage Metrics
+    # ---------------------------------------------------
+    total = len(filtered)
+    clustered = (filtered["aspect_cluster"] != "Unclustered").sum()
+    unclustered_cnt = total - clustered
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Sentences", total)
+    c2.metric("Clustered", clustered)
+    c3.metric("Unclustered", unclustered_cnt)
+    c4.metric(
+        "Coverage %",
+        f"{(clustered / total * 100):.1f}%" if total else "0%"
+    )
+
+    st.divider()
+
+    # ---------------------------------------------------
+    # Cluster Distribution (SORTED & STABLE)
+    # ---------------------------------------------------
+    st.markdown("### 📊 Aspect Cluster Distribution")
+
+    cluster_counts = (
+        filtered["aspect_cluster"]
+        .value_counts()
+        .sort_values(ascending=False)
+        .reset_index()
+    )
+    cluster_counts.columns = ["aspect_cluster", "count"]
+
+    # Force order (prevents Streamlit resorting)
+    cluster_counts["aspect_cluster"] = pd.Categorical(
+        cluster_counts["aspect_cluster"],
+        categories=cluster_counts["aspect_cluster"].tolist(),
+        ordered=True
+    )
+
+    st.bar_chart(
+        cluster_counts.set_index("aspect_cluster")["count"]
+    )
+
+    st.dataframe(cluster_counts, use_container_width=True)
+
+    st.divider()
+
+    # ---------------------------------------------------
+    # Raw → Cluster Mapping Audit
+    # ---------------------------------------------------
+    st.markdown("### 🔍 Aspect → Cluster Mapping Audit")
+
+    audit_df = (
+        filtered[["aspect", "aspect_cluster"]]
+        .drop_duplicates()
+        .sort_values(["aspect_cluster", "aspect"])
+        .reset_index(drop=True)
+    )
+
+    st.dataframe(audit_df, use_container_width=True)
+
+    st.divider()
+
+    # ---------------------------------------------------
+    # Unclustered Diagnostics
+    # ---------------------------------------------------
+    st.markdown("### ⚠️ Unclustered Aspects")
+
+    unclustered_df = audit_df[
+        audit_df["aspect_cluster"] == "Unclustered"
+    ]
+
+    if unclustered_df.empty:
+        st.success("✅ All aspects successfully clustered.")
+    else:
+        st.warning(
+            f"{len(unclustered_df)} unique aspects are not clustered. "
+            "Add keywords in the sidebar to improve coverage."
+        )
+
+        freq_unclustered = (
+            filtered[filtered["aspect_cluster"] == "Unclustered"]["aspect"]
+            .value_counts()
+            .reset_index()
+        )
+        freq_unclustered.columns = ["aspect", "count"]
+
+        st.dataframe(freq_unclustered, use_container_width=True)
