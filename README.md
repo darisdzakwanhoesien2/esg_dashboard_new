@@ -34,3 +34,5 @@ esg-dashboard/
 ├─ requirements_streamlit.txt   # for Streamlit Cloud (NO torch)
 ├─ requirements_local.txt       # for local dev (with torch, transformers)
 └─ README.md
+
+New Version
