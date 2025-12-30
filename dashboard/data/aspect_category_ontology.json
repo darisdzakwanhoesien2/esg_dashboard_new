@@ -1,0 +1,34 @@
+{
+  "E": {
+    "label": "Environmental",
+    "aliases": ["E", "ENV", "environment", "environmental"]
+  },
+  "S": {
+    "label": "Social",
+    "aliases": ["S", "SOC", "social"]
+  },
+  "G": {
+    "label": "Governance",
+    "aliases": ["G", "GOV", "governance"]
+  },
+  "E-S": {
+    "label": "Environmental & Social",
+    "aliases": ["E-S", "S-E", "ES", "E S"]
+  },
+  "E-G": {
+    "label": "Environmental & Governance",
+    "aliases": ["E-G", "G-E", "EG", "E G"]
+  },
+  "S-G": {
+    "label": "Social & Governance",
+    "aliases": ["S-G", "G-S", "SG", "S G"]
+  },
+  "E-S-G": {
+    "label": "Environmental, Social & Governance",
+    "aliases": ["ESG", "E-S-G", "E S G", "E,S,G"]
+  },
+  "OTHER": {
+    "label": "Other / Unclassified",
+    "aliases": ["none", "unknown", "", null]
+  }
+}

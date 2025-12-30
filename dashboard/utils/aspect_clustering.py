@@ -38,7 +38,21 @@ ASPECT_CLUSTER_JSON = {
     "Risk Management & Internal Control": [
         "risk", "risk management", "risk assessment", "risk mitigation",
         "internal control", "internal audit", "control system",
-        "compliance risk", "legal risk", "liquidity risk", "credit risk"
+        "compliance risk", "legal risk", "liquidity risk", "credit risk",
+        "compliance",
+        "legal compliance",
+        "manajemen risiko",
+        "internal controls",
+        "regulatory compliance",
+        "emergency preparedness",
+        "emergency response",
+        "audit processes",
+        "legal and regulatory compliance",
+        "legal exposure",
+        "risk management",
+        "internal control system",
+        "integrated risk management",
+        "early warning system"
     ],
 
     "Ethics, Integrity & Anti-Corruption": [
@@ -192,7 +206,31 @@ ASPECT_CLUSTER_JSON = {
     "Financial Performance & Capital": [
         "revenue", "profit", "profitability",
         "capital", "assets", "liabilities",
-        "cash flow", "equity", "investment", "financial","financial performance",'financial instruments',"economic performance"
+        "cash flow", "equity", "investment", "financial","financial performance",'financial instruments',"economic performance",
+            "taxation",
+        "tax",
+        "financing",
+        "finance",
+        "sustainable bonds",
+        "green bond issuance",
+        "cash and cash equivalents",
+        "earnings per share",
+        "dividends",
+        "payables",
+        "net sales",
+        "capital structure",
+        "gearing ratio",
+        "tax compliance",
+        "tax contribution",
+        "tax assessment",
+        "tax management",
+        "dividend policy",
+        "cash management",
+        "debt instruments",
+        "funding",
+        "loans",
+        "bond issuance",
+        "tax strategy"
     ],
 
     "Business Strategy & Operations": [
@@ -220,48 +258,6 @@ ASPECT_CLUSTER_JSON = {
         "privacy", "digital transformation"
     ]
 }
-
-
-# ASPECT_CLUSTER_JSON = {
-#     "Governance": [
-#         "governance",
-#         "corporate governance",
-#         "board oversight",
-#         "management oversight"
-#     ],
-#     "Emissions": [
-#         "emissions",
-#         "carbon",
-#         "carbon footprint",
-#         "ghg",
-#         "greenhouse gas",
-#         "scope 1",
-#         "scope 2",
-#         "scope 3"
-#     ],
-#     "Financial Reporting": [
-#         "financial reporting",
-#         "financial performance",
-#         "financial disclosure",
-#         "financial"
-#     ],
-#     "Climate & Energy": [
-#         "energy",
-#         "renewable energy",
-#         "energy efficiency",
-#         "energy transition"
-#     ],
-#     "Community & Social Impact": [
-#         "stakeholder engagement",
-#         "community",
-#         "social impact"
-#     ],
-#     "Tax & Compliance": [
-#         "tax",
-#         "taxation",
-#         "compliance"
-#     ]
-# }
 
 def cluster_aspect(aspect: str) -> str:
     if not isinstance(aspect, str):

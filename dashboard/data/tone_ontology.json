@@ -1,0 +1,41 @@
+{
+  "OUTCOME": {
+    "label": "Outcome",
+    "aliases": [
+      "outcome",
+      "achievement",
+      "result",
+      "impact",
+      "success"
+    ]
+  },
+  "ACTION": {
+    "label": "Action",
+    "aliases": [
+      "action",
+      "initiative",
+      "implementation",
+      "execution"
+    ]
+  },
+  "COMMITMENT": {
+    "label": "Commitment",
+    "aliases": [
+      "commitment",
+      "commit",
+      "pledge",
+      "promise"
+    ]
+  },
+  "OTHER": {
+    "label": "Other / Unclassified",
+    "aliases": [
+      "challenge",
+      "compliance",
+      "neutral",
+      "",
+      null,
+      "unknown"
+    ]
+  }
+}

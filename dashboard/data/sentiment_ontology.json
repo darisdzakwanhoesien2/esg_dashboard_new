@@ -1,0 +1,43 @@
+{
+  "POSITIVE": {
+    "label": "Positive",
+    "aliases": [
+      "positive",
+      "positif",
+      "Positive",
+      "POS",
+      "good",
+      "favorable"
+    ]
+  },
+  "NEUTRAL": {
+    "label": "Neutral",
+    "aliases": [
+      "neutral",
+      "Neutral",
+      "neural",
+      "none",
+      "commitment",
+      "mixed"
+    ]
+  },
+  "NEGATIVE": {
+    "label": "Negative",
+    "aliases": [
+      "negative",
+      "Negative",
+      "NEG",
+      "bad",
+      "unfavorable"
+    ]
+  },
+  "OTHER": {
+    "label": "Other / Unclassified",
+    "aliases": [
+      "",
+      null,
+      "unknown",
+      "na"
+    ]
+  }
+}
