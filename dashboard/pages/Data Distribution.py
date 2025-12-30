@@ -74,16 +74,13 @@ ASPECT_ALIAS_MAP = {
     if alias is not None
 }
 
-
 def normalize_aspect_category(value):
     if pd.isna(value):
         return "OTHER"
     return ASPECT_ALIAS_MAP.get(str(value).strip().upper(), "OTHER")
 
-
 def aspect_label(canonical):
     return ASPECT_ONTOLOGY.get(canonical, {}).get("label", canonical)
-
 
 # -----------------------------
 # Sentiment Ontology
@@ -98,16 +95,34 @@ SENTIMENT_ALIAS_MAP = {
     if alias is not None
 }
 
-
 def normalize_sentiment(value):
     if pd.isna(value):
         return "OTHER"
     return SENTIMENT_ALIAS_MAP.get(str(value).strip().lower(), "OTHER")
 
-
 def sentiment_label(canonical):
     return SENTIMENT_ONTOLOGY.get(canonical, {}).get("label", canonical)
 
+# -----------------------------
+# Tone Ontology  ✅ NEW
+# -----------------------------
+with open(BASE_DATA_PATH / "tone_ontology.json") as f:
+    TONE_ONTOLOGY = json.load(f)
+
+TONE_ALIAS_MAP = {
+    str(alias).strip().lower(): canonical
+    for canonical, meta in TONE_ONTOLOGY.items()
+    for alias in meta.get("aliases", [])
+    if alias is not None
+}
+
+def normalize_tone(value):
+    if pd.isna(value):
+        return "OTHER"
+    return TONE_ALIAS_MAP.get(str(value).strip().lower(), "OTHER")
+
+def tone_label(canonical):
+    return TONE_ONTOLOGY.get(canonical, {}).get("label", canonical)
 
 # =================================================
 # 🧹 APPLY NORMALIZATION
@@ -120,13 +135,18 @@ df["sentiment_raw"] = df["sentiment"]
 df["sentiment_norm"] = df["sentiment"].apply(normalize_sentiment)
 df["sentiment_label"] = df["sentiment_norm"].apply(sentiment_label)
 
+df["tone_raw"] = df["tone"]
+df["tone_norm"] = df["tone"].apply(normalize_tone)
+df["tone_label"] = df["tone_norm"].apply(tone_label)
+
 ESG_ORDER = ["E", "S", "G", "E-S", "E-G", "S-G", "E-S-G", "OTHER"]
 SENTIMENT_ORDER = ["POSITIVE", "NEUTRAL", "NEGATIVE", "OTHER"]
+TONE_ORDER = ["OUTCOME", "ACTION", "COMMITMENT", "OTHER"]
 
 # =================================================
 # 1️⃣ Aspect Category Distribution
 # =================================================
-st.subheader("1️⃣ Aspect Category Distribution (Ontology-Based)")
+st.subheader("1️⃣ Aspect Category Distribution")
 
 fig1_data = (
     df["aspect_category_norm"]
@@ -177,7 +197,7 @@ st.plotly_chart(fig2, use_container_width=True)
 # =================================================
 # 3️⃣ Sentiment Distribution by Aspect Category
 # =================================================
-st.subheader("3️⃣ Sentiment Distribution by Aspect Category (Normalized)")
+st.subheader("3️⃣ Sentiment Distribution by Aspect Category")
 
 sent_aspect = (
     df.groupby(["aspect_category_norm", "sentiment_norm"])
@@ -201,23 +221,24 @@ fig3.update_layout(xaxis_tickangle=-30)
 st.plotly_chart(fig3, use_container_width=True)
 
 # =================================================
-# 4️⃣ Tone Distribution by Aspect Category
+# 4️⃣ Tone Distribution by Aspect Category ✅ FIXED
 # =================================================
 st.subheader("4️⃣ Tone Distribution by Aspect Category")
 
 tone_aspect = (
-    df.groupby(["aspect_category_norm", "tone"])
+    df.groupby(["aspect_category_norm", "tone_norm"])
     .size()
     .reset_index(name="count")
 )
 
 tone_aspect["aspect_label"] = tone_aspect["aspect_category_norm"].apply(aspect_label)
+tone_aspect["tone_label"] = tone_aspect["tone_norm"].apply(tone_label)
 
 fig4 = px.bar(
     tone_aspect,
     x="aspect_label",
     y="count",
-    color="tone",
+    color="tone_label",
     barmode="group",
     title="Tone Distribution by Aspect Category",
 )
@@ -243,7 +264,7 @@ pivot_tone = pd.pivot_table(
     df,
     values="sentence",
     index="aspect_category_norm",
-    columns="tone",
+    columns="tone_label",
     aggfunc="count",
     fill_value=0,
 ).reindex(ESG_ORDER)
@@ -259,19 +280,19 @@ ax[1].set_title("Tone Heatmap")
 st.pyplot(fig)
 
 # =================================================
-# 📤 JSON EXPORTS (SAFE, NO index BUG)
+# 📤 JSON EXPORTS
 # =================================================
 st.subheader("📤 Export Normalized JSON Annotations")
 
+# Aspect JSON
 aspect_json = (
     df["aspect_category_norm"]
     .value_counts()
     .reindex(ESG_ORDER, fill_value=0)
     .reset_index()
 )
-
-aspect_json.columns = ["aspect_category_norm", "count"]
-aspect_json["label"] = aspect_json["aspect_category_norm"].apply(aspect_label)
+aspect_json.columns = ["aspect", "count"]
+aspect_json["label"] = aspect_json["aspect"].apply(aspect_label)
 
 st.download_button(
     "Download Aspect Summary (JSON)",
@@ -280,15 +301,15 @@ st.download_button(
     "application/json",
 )
 
+# Sentiment JSON
 sentiment_json = (
     df["sentiment_norm"]
     .value_counts()
     .reindex(SENTIMENT_ORDER, fill_value=0)
     .reset_index()
 )
-
-sentiment_json.columns = ["sentiment_norm", "count"]
-sentiment_json["label"] = sentiment_json["sentiment_norm"].apply(sentiment_label)
+sentiment_json.columns = ["sentiment", "count"]
+sentiment_json["label"] = sentiment_json["sentiment"].apply(sentiment_label)
 
 st.download_button(
     "Download Sentiment Summary (JSON)",
@@ -297,10 +318,27 @@ st.download_button(
     "application/json",
 )
 
+# Tone JSON ✅ NEW
+tone_json = (
+    df["tone_norm"]
+    .value_counts()
+    .reindex(TONE_ORDER, fill_value=0)
+    .reset_index()
+)
+tone_json.columns = ["tone", "count"]
+tone_json["label"] = tone_json["tone"].apply(tone_label)
+
+st.download_button(
+    "Download Tone Summary (JSON)",
+    json.dumps(tone_json.to_dict(orient="records"), indent=2),
+    "tone_summary.json",
+    "application/json",
+)
+
 # =================================================
 # 🧪 DEBUG VIEW
 # =================================================
-with st.expander("🧪 Debug: Raw vs Normalized"):
+with st.expander("🧪 Debug: Raw vs Normalized Labels"):
     st.dataframe(
         df[
             [
@@ -308,7 +346,8 @@ with st.expander("🧪 Debug: Raw vs Normalized"):
                 "aspect_category_norm",
                 "sentiment_raw",
                 "sentiment_norm",
-                "tone",
+                "tone_raw",
+                "tone_norm",
                 "sentence",
             ]
         ].head(30),
