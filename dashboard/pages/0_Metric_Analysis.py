@@ -2,18 +2,22 @@ import streamlit as st
 import pandas as pd
 
 from utils.metrics import compute_metrics
+from utils.alignment import align_by_sentence
 from utils.validation import validate_columns
 
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
 st.set_page_config(
-    page_title="Prediction Metric Analysis",
+    page_title="Metric Analysis",
     layout="wide"
 )
 
-st.title("📊 Prediction Metric Analysis Dashboard")
-st.caption("Evaluate Aspect Category, Sentiment, and Tone predictions")
+st.title("📊 Metric Analysis — Ground Truth vs Prediction")
+st.caption(
+    "Sentence-level alignment with minimum-count matching "
+    "(robust for ESG / NLP pipelines)"
+)
 
 # --------------------------------------------------
 # REQUIRED COLUMNS
@@ -30,15 +34,21 @@ TARGETS = ["aspect_category", "sentiment", "tone"]
 # --------------------------------------------------
 # FILE UPLOAD
 # --------------------------------------------------
-st.header("1️⃣ Upload Datasets")
+st.header("1️⃣ Upload Data")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    gt_file = st.file_uploader("📥 Ground Truth CSV", type=["csv"])
+    gt_file = st.file_uploader(
+        "📥 Ground Truth CSV",
+        type=["csv"]
+    )
 
 with col2:
-    pred_file = st.file_uploader("📤 Prediction CSV", type=["csv"])
+    pred_file = st.file_uploader(
+        "📤 Prediction CSV",
+        type=["csv"]
+    )
 
 if not gt_file or not pred_file:
     st.info("Please upload both Ground Truth and Prediction CSV files.")
@@ -62,31 +72,66 @@ missing_pred = validate_columns(pred_df, REQUIRED_COLS)
 if missing_gt or missing_pred:
     st.error(
         f"""
-        ❌ Missing required columns
+❌ Missing required columns
 
-        Ground Truth missing: {missing_gt}
-        Prediction missing: {missing_pred}
+Ground Truth missing: {missing_gt}
+Prediction missing: {missing_pred}
         """
     )
     st.stop()
 
-if len(gt_df) != len(pred_df):
-    st.error("❌ Ground Truth and Prediction files must have the same number of rows.")
+st.success(
+    f"Loaded {len(gt_df)} GT rows and {len(pred_df)} Prediction rows"
+)
+
+# --------------------------------------------------
+# SENTENCE ALIGNMENT
+# --------------------------------------------------
+st.header("2️⃣ Sentence Alignment")
+
+aligned_df = align_by_sentence(gt_df, pred_df)
+
+if aligned_df.empty:
+    st.error(
+        "❌ No overlapping sentences found between Ground Truth and Prediction."
+    )
     st.stop()
 
-st.success(f"Loaded {len(gt_df)} rows successfully.")
+coverage_gt = len(aligned_df) / len(gt_df) * 100
+coverage_pred = len(aligned_df) / len(pred_df) * 100
+
+st.success(
+    f"Aligned {len(aligned_df)} rows "
+    f"({coverage_gt:.1f}% of GT, {coverage_pred:.1f}% of Predictions)"
+)
+
+with st.expander("🔍 Preview aligned data"):
+    st.dataframe(
+        aligned_df[
+            [
+                "sentence",
+                "aspect_category_gt",
+                "aspect_category_pred",
+                "sentiment_gt",
+                "sentiment_pred",
+                "tone_gt",
+                "tone_pred",
+            ]
+        ].head(20),
+        use_container_width=True
+    )
 
 # --------------------------------------------------
 # METRIC COMPUTATION
 # --------------------------------------------------
-st.header("2️⃣ Evaluation Metrics")
+st.header("3️⃣ Evaluation Metrics")
 
 metric_results = {}
 
 for target in TARGETS:
     metrics = compute_metrics(
-        gt_df[target],
-        pred_df[target]
+        aligned_df[f"{target}_gt"],
+        aligned_df[f"{target}_pred"]
     )
     metric_results[target] = metrics
 
@@ -94,56 +139,89 @@ for target in TARGETS:
 # DISPLAY METRICS
 # --------------------------------------------------
 tabs = st.tabs(
-    ["Aspect Category", "Sentiment", "Tone"]
+    [
+        "Aspect Category",
+        "Sentiment",
+        "Tone"
+    ]
 )
 
 for tab, target in zip(tabs, TARGETS):
     with tab:
-        st.subheader(f"🎯 {target.replace('_', ' ').title()} Metrics")
+        st.subheader(f"🎯 {target.replace('_', ' ').title()}")
 
-        df_metrics = pd.DataFrame(metric_results[target], index=[0]).T
-        df_metrics.columns = ["Score"]
+        m = metric_results[target]
 
-        st.dataframe(
-            df_metrics.style.format("{:.4f}"),
-            use_container_width=True
-        )
+        col1, col2, col3, col4, col5 = st.columns(5)
 
-        st.metric("Accuracy", f"{metric_results[target]['accuracy']:.4f}")
-        st.metric("F1 Score", f"{metric_results[target]['f1']:.4f}")
+        col1.metric("Accuracy", f"{m['accuracy']:.4f}")
+        col2.metric("Precision", f"{m['precision']:.4f}")
+        col3.metric("Recall", f"{m['recall']:.4f}")
+        col4.metric("F1 Score", f"{m['f1']:.4f}")
+        col5.metric("Dropped Rows", m["dropped_rows"])
 
 # --------------------------------------------------
 # ERROR ANALYSIS
 # --------------------------------------------------
-st.header("3️⃣ Error Analysis")
+st.header("4️⃣ Error Analysis")
 
 selected_target = st.selectbox(
     "Select target for error inspection",
     TARGETS
 )
 
-errors = gt_df[gt_df[selected_target] != pred_df[selected_target]].copy()
-errors["predicted"] = pred_df.loc[errors.index, selected_target]
-errors["actual"] = gt_df.loc[errors.index, selected_target]
+errors = aligned_df[
+    aligned_df[f"{selected_target}_gt"]
+    != aligned_df[f"{selected_target}_pred"]
+].copy()
+
+errors.rename(
+    columns={
+        f"{selected_target}_gt": "actual",
+        f"{selected_target}_pred": "predicted"
+    },
+    inplace=True
+)
 
 st.write(f"❌ Total errors: {len(errors)}")
 
-st.dataframe(
-    errors[
-        ["sentence", "actual", "predicted"]
-    ],
-    use_container_width=True
-)
+if errors.empty:
+    st.success("No errors found 🎉")
+else:
+    st.dataframe(
+        errors[
+            [
+                "sentence",
+                "actual",
+                "predicted"
+            ]
+        ],
+        use_container_width=True
+    )
 
 # --------------------------------------------------
 # CONFIDENCE ANALYSIS (OPTIONAL)
 # --------------------------------------------------
-if "confidence" in pred_df.columns:
-    st.header("4️⃣ Confidence vs Errors")
+if "confidence_pred" in aligned_df.columns:
+    st.header("5️⃣ Confidence vs Errors")
 
-    errors["confidence"] = pred_df.loc[errors.index, "confidence"]
+    err_conf = aligned_df.copy()
+    err_conf["is_error"] = (
+        err_conf[f"{selected_target}_gt"]
+        != err_conf[f"{selected_target}_pred"]
+    )
 
     st.scatter_chart(
-        errors[["confidence"]],
+        err_conf[["confidence_pred", "is_error"]],
         height=300
     )
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+st.caption(
+    "✔ Sentence-level matching | "
+    "✔ Min-count alignment | "
+    "✔ Safe categorical evaluation | "
+    "✔ Audit-ready metrics"
+)
