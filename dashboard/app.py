@@ -1,3 +1,22 @@
+import streamlit as st
+
+# -------------------------------------------------------
+# SESSION STATE INITIALIZATION (CRITICAL)
+# -------------------------------------------------------
+if "raw_df" not in st.session_state:
+    st.session_state["raw_df"] = None
+
+if "filtered_df" not in st.session_state:
+    st.session_state["filtered_df"] = None
+
+# -------------------------------------------------------
+# Persist filtered dataframe for pages
+# -------------------------------------------------------
+st.session_state["raw_df"] = raw_df
+st.session_state["filtered_df"] = filtered
+
+
+
 # # dashboard/app.py
 # import os
 # import streamlit as st

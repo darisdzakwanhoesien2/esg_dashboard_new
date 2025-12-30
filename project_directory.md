@@ -3,6 +3,7 @@
 **Root:** `/Users/darisdzakwanhoesien/Documents/esg_dashboard_new`
 
   📄 .DS_Store<br>
+  📄 .gitattributes<br>
   📄 README.md<br>
 <details><summary>📁 dashboard/</summary>
     📄 .DS_Store<br>
@@ -10,28 +11,30 @@
     📄 finbert_model.py<br>
     📄 model_utils.py<br>
   <details><summary>📁 pages/</summary>
-      📄 1_📈_Model_Analytics.py<br>
-      📄 2_Download_Data.py<br>
-      📄 3_Data_Subset.py<br>
-      📄 4_Data_Subset_new.py<br>
-      📄 5_Data_Distribution.py<br>
-      📄 6_Tone_Distribution.py<br>
-      📄 7_Upload_Balanced_Tool.py<br>
+      📄 01_Aspects_Raw.py<br>
+      📄 02_Aspects_Clustered.py<br>
+      📄 03_Aspect_Comparison.py<br>
+      📄 0_new.py<br>
       📄 8_new.py<br>
-      📄 app.py<br>
-      📄 app_2.py<br>
-      📄 data.py<br>
-      📄 data_2.py<br>
+  </details>
+  <details><summary>📁 utils/</summary>
+      📄 aspect_clustering.py<br>
+      📄 data_loader.py<br>
   </details>
 </details>
 <details><summary>📁 data/</summary>
     📄 .DS_Store<br>
     📄 Dataset.csv<br>
     📄 data_output.csv<br>
+    📄 data_output_2.csv<br>
     📄 output.csv<br>
     📄 output_in_csv.csv<br>
 </details>
 <details><summary>📁 pages/</summary>
+</details>
+<details><summary>📁 previous_data/</summary>
+    📄 .DS_Store<br>
+    📄 data_output_subset.csv<br>
 </details>
   📄 project_directory.md<br>
   📄 requirements.txt<br>
