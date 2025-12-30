@@ -110,6 +110,36 @@ def parse_provider(m):
 df["provider"] = df["model"].apply(parse_provider)
 
 # -------------------------------------------------------
+# Helper: Ensure pivot contains ALL models
+# -------------------------------------------------------
+def ensure_all_models(reference_df, pivot):
+    all_models = sorted(reference_df["model"].dropna().unique())
+    for m in all_models:
+        if m not in pivot.columns:
+            pivot[m] = None
+    return pivot[all_models]
+
+# -------------------------------------------------------
+# Helper: completeness scoring
+# -------------------------------------------------------
+def model_completeness(df_pdf, df_page):
+    expected = sorted(df_pdf["model"].dropna().unique())
+    present = sorted(df_page["model"].dropna().unique())
+    missing = set(expected) - set(present)
+
+    score = len(present) / len(expected) if expected else 1.0
+
+    return {
+        "expected": expected,
+        "present": present,
+        "missing": sorted(missing),
+        "missing_count": len(missing),
+        "present_count": len(present),
+        "total": len(expected),
+        "score": score
+    }
+
+# -------------------------------------------------------
 # Sidebar Filters
 # -------------------------------------------------------
 st.sidebar.header("🔍 Filters")
