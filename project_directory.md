@@ -8,6 +8,11 @@
 <details><summary>📁 dashboard/</summary>
     📄 .DS_Store<br>
     📄 app.py<br>
+  <details><summary>📁 data/</summary>
+      📄 aspect_category_ontology.json<br>
+      📄 sentiment_ontology.json<br>
+      📄 tone_ontology.json<br>
+  </details>
     📄 finbert_model.py<br>
     📄 model_utils.py<br>
   <details><summary>📁 pages/</summary>
@@ -16,6 +21,10 @@
       📄 03_Aspect_Comparison.py<br>
       📄 0_new.py<br>
       📄 8_new.py<br>
+      📄 Data Distribution.py<br>
+      📄 Distribution Document.py<br>
+      📄 Sankey.py<br>
+      📄 Tone_Distribution.py<br>
   </details>
   <details><summary>📁 utils/</summary>
       📄 aspect_clustering.py<br>
